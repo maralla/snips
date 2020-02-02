@@ -32,11 +32,11 @@ func! snips#expand() abort
   let text = getline('.')[:column-1]
   let last = split(text, '\s\+', 1)[-1]
   if empty(last)
-    return
+    return ''
   endif
   let res = s:expand(last)
   if empty(res)
-    return
+    return ''
   endif
 
   let lines = split(res.content, "\n")
@@ -59,6 +59,7 @@ func! snips#expand() abort
     call s:select(s:pos.line, s:pos.col, res.length)
   endif
   call timer_start(0, {t -> s:setup_expand()})
+  return ''
 endfunc
 
 func! snips#jump_next() abort
@@ -98,6 +99,8 @@ func! s:setup_expand()
   let s:callback_id = listener_add(function('s:callback'))
 endfunc
 
+imap <leader>z <C-R>=snips#expand()<CR>
+
 func! s:on_expand_tick(timer)
   let m = mode()
   if m == 's' || m == 'i'
@@ -125,19 +128,17 @@ func! s:on_text_change() abort
   let line_diff = l - s:pos.line
   let col_pos = c + 1
   if line_diff < 0
-    let lines = [getline(l)]
+    let lines = []
   else
     let lines = getline(s:pos.line, l)
   endif
   call Log(string(lines))
-  if len(lines) == 1
+  if len(lines) <= 1
     call Log(string([s:pos.col-1, c]))
-    if c <= s:pos.col - 1
+    if c < s:pos.col - 1
       let lines = []
-    else
-      if line_diff >= 0
-        let lines[0] = lines[0][s:pos.col-1:c]
-      endif
+    elseif line_diff >= 0
+      let lines[0] = lines[0][s:pos.col-1:c]
     endif
   else
     let lines[0] = lines[0][s:pos.col-1:]
@@ -150,8 +151,73 @@ func! s:on_text_change() abort
   if empty(res)
     return
   endif
-  let s:pos.line = s:current_line + res.lnum
-  let s:pos.col = res.col + 1
+  call Log(string(res.updates))
+  call timer_start(0, {t -> s:update_text(res)})
+endfunc
+
+func! s:update_text(res) abort
+  call listener_remove(s:callback_id)
+  try
+    call Log("before updates")
+    for u in a:res.updates
+      call s:set_text(s:current_line, u)
+    endfor
+    call Log("after updates")
+    let s:pos.line = s:current_line + a:res.lnum
+    let s:pos.col = a:res.col + 1
+    call s:select(s:pos.line, s:pos.col, 0)
+  finally
+    let s:callback_id = listener_add(function('s:callback'))
+  endtry
+endfunc
+
+func! s:set_text(base_line, item) abort
+  let lnum = a:base_line + a:item.line_offset
+  let text = getline(lnum)
+  call Log(string([lnum, text, a:item, string(a:item.content)]))
+  if a:item.col_offset == 0
+    let prefix = ''
+  else
+    let prefix = text[:a:item.col_offset-1]
+  endif
+  let suffix = text[a:item.col_offset+a:item.length:]
+  let lines = split(a:item.content, "\n", 1)
+  call Log(string(["line replace", prefix, suffix, lines]))
+  if len(lines) > 1
+    if a:item.col_offset == 0 && a:item.length == 0
+      call append(lnum - 1, lines[0])
+    else
+      call setline(lnum, prefix . lines[0])
+    endif
+    if len(lines) > 2
+      call append(lnum, lines[1:-2])
+    endif
+    if empty(lines[-1])
+      return
+    endif
+    if suffix == '' && a:item.length == 0
+      call append(lnum + len(lines) - 2, lines[-1])
+    else
+      call setline(lnum + len(lines) - 1, lines[-1] . suffix)
+    endif
+  elseif len(lines) == 1
+    call Log(string([lnum, prefix, lines[0], suffix]))
+    if prefix == '' && suffix == '' && a:item.length == 0
+      call append(lnum - 1 , lines[0])
+    else
+      call setline(lnum, prefix . lines[0] . suffix)
+    endif
+  else
+    call setline(lnum, prefix . suffix)
+    call Log(string(["aa", lnum, prefix, suffix]))
+  endif
+endfunc
+
+func! s:add_text(lnum, prefix, suffix, text)
+  if a:prefix == '' && a:suffix == ''
+    call append(a:lnum, text)
+  endif
+  return a:lnum + 1
 endfunc
 
 func! s:select(lnum, start, length)
@@ -164,7 +230,11 @@ func! s:select(lnum, start, length)
   if a:start == end
     let start = virtcol([a:lnum, a:start - 1])
     call Log("aaa".string(start))
-    call feedkeys("\<ESC>".a:lnum.'G'.start.'|a')
+    let action = 'i'
+    if start != 0
+      let action = 'a'
+    endif
+    call feedkeys("\<ESC>".a:lnum.'G'.start.'|'.action)
     return
   endif
   let start = virtcol([a:lnum, a:start])

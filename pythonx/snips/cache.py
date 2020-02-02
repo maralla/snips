@@ -100,12 +100,16 @@ def update_placeholder(fn, ft, content, line_delta, col):
     snip = g.current_snippet
     if snip is None:
         return {}
-    line, col, length = snip.update_placeholder(
-        content, int(line_delta), int(col))
+    line, col, length, updates = snip.update_placeholder(
+        content, int(line_delta), int(col),
+        g.current_snips_info.globals, fn, ft
+    )
+    logger.info("bb %s, %s, %s, %r", line, col, length, updates)
     return {
         'lnum': line,
         'col': col,
         'length': length,
+        'updates': updates
     }
 
 

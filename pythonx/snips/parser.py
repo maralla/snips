@@ -242,7 +242,7 @@ class SnipsParser(object):
                                        | COMMA
                                        | interpolation
                                        | placeholder'''
-        if not isinstance(p[1], Placeholder):
+        if not isinstance(p[1], (Placeholder, Interpolation)):
             p[0] = Text(p[1])
         else:
             p[0] = p[1]
