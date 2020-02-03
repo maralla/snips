@@ -313,7 +313,9 @@ class Interpolation(Base):
         finally:
             g.pop('snip')
             snip.c = ''
-        return str(snip.rv)
+        if snip.is_set():
+            return str(snip.rv)
+        return self.text
 
     def render_vim(self, codes):
         import vim

@@ -132,7 +132,7 @@ func! s:on_text_change() abort
   else
     let lines = getline(s:pos.line, l)
   endif
-  call Log(string(lines))
+  call Log(string(lines).'|'.string(s:pos.line))
   if len(lines) <= 1
     call Log(string([s:pos.col-1, c]))
     if c < s:pos.col - 1
@@ -162,7 +162,7 @@ func! s:update_text(res) abort
     for u in a:res.updates
       call s:set_text(s:current_line, u)
     endfor
-    call Log("after updates")
+    call Log(string(["after updates", a:res.lnum]))
     let s:pos.line = s:current_line + a:res.lnum
     let s:pos.col = a:res.col + 1
     call s:select(s:pos.line, s:pos.col, 0)
