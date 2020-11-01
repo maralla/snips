@@ -1,334 +1,187 @@
 # -*- coding: utf-8 -*-
 
-from .packages.ply.lex import lex
-from .packages.ply.yacc import yacc
-
-from .ast import ParseError, Extends, Priority, Snippet, SnippetStart, \
-    Global, Placeholder, Interpolation, Text
+from .ast import ParseError, Extends, Priority, Snippet, Global, \
+    PreExpand, PostJump
 
 
-class SnipsParser(object):
-    keywords = (
-        'EXTENDS',
-        'PRIORITY',
-        'ENDSNIPPET',
-        'GLOBAL',
-        'ENDGLOBAL',
-    )
+class Doc(object):
+    def __init__(self, fname):
+        self.fname = fname
+        self.stmts = []
 
-    tokens = keywords + (
-        'SNIPPET_START',
-        'WHITESPACE',
-        'COMMA',
-        'DOLLAR',
-        'LBRACE',
-        'RBRACE',
-        'NEWLINE',
-        'COLON',
-        'INTEGER',
-        'COMMENT',
-        'VISUAL',
-        'REGEX',
-        'ESCAPE_CHAR',
-        'INTERPOLATION',
-        'NO_WHITESPACE',
-        'ANY',
-    )
+    def parse_priority(self, lines, i):
+        line = lines[i]
+        parts = line.split()
 
-    def __init__(self):
-        self.lexer = lex(module=self)
-        self.parser = yacc(module=self)
-        self.filename = '<unknown>'
+        try:
+            self.stmts.append(Priority(int(parts[1])))
+        except Exception as e:
+            raise ParseError(self.fname, i, line)
 
-    def parse(self, data, debug=False, filename=None):
-        if filename is not None:
-            self.filename = filename
-        self.lexer.lineno = 1
-        return self.parser.parse(data, debug=debug)
+        return i + 1
 
-    def tokenize(self, data):
-        self.lexer.input(data)
-        return self.lexer
+    def parse_extends(self, lines, i):
+        line = lines[i]
+        parts = line.split(maxsplit=1)
 
-    def t_NEWLINE(self, t):
-        r'\n'
-        t.lexer.lineno += 1
-        return t
-
-    def t_COMMENT(self, t):
-        r'(?m)^\s*\#[^\n]*'
-        return t
-
-    def t_EXTENDS(self, t):
-        'extends'
-        return t
-
-    def t_PRIORITY(self, t):
-        'priority'
-        return t
-
-    def t_ENDSNIPPET(self, t):
-        'endsnippet'
-        return t
-
-    def t_SNIPPET_START(self, t):
-        r'snippet\s+[^\n]+'
-        return t
-
-    def t_GLOBAL(self, t):
-        'global'
-        return t
-
-    def t_ENDGLOBAL(self, t):
-        'endglobal'
-        return t
-
-    def t_COMMA(self, t):
-        ','
-        return t
-
-    def t_COLON(self, t):
-        ':'
-        return t
-
-    def t_DOLLAR(self, t):
-        '\$'
-        return t
-
-    def t_LBRACE(self, t):
-        r'\{'
-        return t
-
-    def t_RBRACE(self, t):
-        r'\}'
-        return t
-
-    def t_REGEX(self, t):
-        r'/[^/\n]+/[^/\n]*/[gima]*'
-        return t
-
-    def t_INTEGER(self, t):
-        r'-?\d+'
-        t.value = int(t.value)
-        return t
-
-    def t_WHITESPACE(self, t):
-        r'[ \t]+'
-        return t
-
-    def t_VISUAL(self, t):
-        r'VISUAL'
-        return t
-
-    def t_ESCAPE_CHAR(self, t):
-        r'\\.'
-        return t
-
-    def t_INTERPOLATION(self, t):
-        '`[^`]*`'
-        t.lexer.lineno += t.value.count('\n')
-        return t
-
-    def t_NO_WHITESPACE(self, t):
-        r'[^ \t\n,"$`}{]+'
-        return t
-
-    def t_ANY(self, t):
-        r'[^\n]+'
-        return t
-
-    def t_error(self, t):
-        raise ParseError(self.filename, t.lineno,
-                         "illegal character '{}'".format(t.value[0]))
-
-    def p_doc(self, p):
-        '''doc : statement
-            | statement doc'''
-        p[0] = []
-        if p[1] is not None:
-            p[0].append(p[1])
-        if len(p) == 3:
-            p[0].extend(p[2])
-
-    def p_statement(self, p):
-        '''statement : EXTENDS WHITESPACE extends_item NEWLINE
-                     | PRIORITY WHITESPACE INTEGER NEWLINE
-                     | snippet
-                     | global
-                     | COMMENT
-                     | whitespace NEWLINE'''
-        if p[1] == 'extends':
-            p[0] = Extends(p[3])
-        elif p[1] == 'priority':
-            p[0] = Priority(p[3])
-        elif isinstance(p[1], (Snippet, Global)):
-            p[0] = p[1]
-        else:
-            p[0] = None
-
-    def p_snippet(self, p):
-        '''snippet : snippet_start NEWLINE snippet_body ENDSNIPPET whitespace NEWLINE'''  # noqa
-        p[0] = Snippet(p[1].trigger, p[1].description, p[1].options, p[3])
-
-    def p_global(self, p):
-        '''global : GLOBAL WHITESPACE NO_WHITESPACE whitespace NEWLINE snippet_body ENDGLOBAL whitespace NEWLINE''' # noqa
-        p[0] = Global(p[3], p[6])
-
-    def p_extends_item(self, p):
-        '''extends_item : NO_WHITESPACE whitespace
-                        | NO_WHITESPACE whitespace COMMA whitespace extends_item'''  # noqa
-        if len(p) == 3:
-            p[0] = [p[1]]
-        else:
-            p[0] = [p[1]] + p[5]
-
-    def p_snippet_start(self, p):
-        '''snippet_start : SNIPPET_START'''
-        # snippet !this is trigger! "description" b
-        trigger, description, options = parse_snippet_start(p, p[1])
-        p[0] = SnippetStart(trigger, description, options)
-
-    def p_snippet_body(self, p):
-        '''snippet_body : snippet_line snippet_body
-                        |'''
-        if len(p) == 3:
-            p[0] = [p[1]] + p[2]
-        else:
-            p[0] = []
-
-    def p_snippet_line(self, p):
-        '''snippet_line : NEWLINE
-                        | placeholder snippet_line
-                        | interpolation snippet_line
-                        | text snippet_line'''
-        if len(p) == 3:
-            p[0] = [p[1]] + p[2]
-        else:
-            p[0] = [Text(p[1])]
-
-    def p_placeholder(self, p):
-        '''placeholder : DOLLAR INTEGER
-                       | DOLLAR LBRACE INTEGER RBRACE
-                       | DOLLAR LBRACE VISUAL RBRACE
-                       | DOLLAR LBRACE VISUAL COLON placeholder_default RBRACE
-                       | DOLLAR LBRACE INTEGER COLON placeholder_default RBRACE
-                       | DOLLAR LBRACE INTEGER REGEX whitespace RBRACE'''  # noqa
-        sub = ''
-        tp = 'normal'
-        if len(p) == 3:
-            p[0] = Placeholder(p[2])
-        elif len(p) >= 5:
-            default = ()
-            if len(p) == 7:
-                if p[4] == ':':
-                    default = p[5]
-                else:
-                    sub = p[4]
-                    tp = 'sub'
-            p[0] = Placeholder(p[3], default, sub=sub, tp=tp)
-
-    def p_placeholder_default(self, p):
-        '''placeholder_default : placeholder_default_content placeholder_default
-                               |'''
-        p[0] = []
-        if len(p) == 3:
-            p[0] = [p[1]] + p[2]
-
-    def p_placeholder_default_content(self, p):
-        '''placeholder_default_content : NO_WHITESPACE
-                                       | ESCAPE_CHAR
-                                       | WHITESPACE
-                                       | INTEGER
-                                       | COMMA
-                                       | interpolation
-                                       | placeholder'''
-        if not isinstance(p[1], (Placeholder, Interpolation)):
-            p[0] = Text(p[1])
-        else:
-            p[0] = p[1]
-
-    def p_interpolation(self, p):
-        '''interpolation : INTERPOLATION'''
-        p[0] = Interpolation(p[1])
-
-    def p_text(self, p):
-        '''text : ESCAPE_CHAR
-                | NO_WHITESPACE
-                | WHITESPACE
-                | COMMENT
-                | DOLLAR
-                | COLON
-                | LBRACE
-                | RBRACE
-                | VISUAL
-                | COMMA
-                | INTEGER
-                | ANY'''
-        p[0] = Text(p[1])
-
-    def p_whitespace(self, p):
-        '''whitespace : WHITESPACE
-                    |'''
-        if len(p) == 2:
-            p[0] = Text(p[1])
-        else:
-            p[0] = Text('')
-
-    def p_error(self, p):
-        raise ParseError(self.filename, p.lineno,
-                         "Syntax error at '{}'".format(p))
-
-
-def _parse_snippet_description(text, remain):
-    description = ''
-    index = remain[:-1].rfind('"')
-    if index == -1:
-        # no string found
-        trigger = text[7:]
-    elif remain[index-1] not in (' \t'):
-        trigger = text[7:]
-    else:
-        trigger = remain[7:index].strip()
-        if not trigger:
-            trigger = text[7:]
-        else:
-            description = remain[index+1:-1]
-    return trigger, description
-
-
-# snippet trigger_word [ "description" [ options ] ]
-def parse_snippet_start(p, text):
-    text = text.strip()
-    options = description = ''
-    if text[-1] != '"':
-        # options may exists.
-        parts = text.rsplit(maxsplit=1)
         if len(parts) != 2:
-            raise ParseError(p.file, p.line, "invalid snippet definition")
-        remain, opt = parts
-        if remain[-1] != '"':
-            # no options and description exist.
+            raise ParseError(self.fname, i, "invalid extends")
+
+        self.stmts.append(Extends([t.strip() for t in parts[1].split(',')]))
+        return i + 1
+
+    @staticmethod
+    def _parse_snippet_description(text, remain):
+        description = ''
+        index = remain[:-1].rfind('"')
+        if index == -1:
+            # no string found
+            trigger = text[7:]
+        elif remain[index-1] not in (' \t'):
             trigger = text[7:]
         else:
-            trigger, description = _parse_snippet_description(text, remain)
-            if description:
-                options = opt
-    else:
-        trigger, description = _parse_snippet_description(text, text)
-    trigger = trigger.strip()
-    if len(trigger.split()) > 1:
-        if trigger[0] != trigger[-1]:
-            raise ParseError(
-                p.file, p.line,
-                "invalid snippet trigger definition `{}`".format(trigger))
-        trigger = trigger[1:-1].strip()
-    if not trigger:
-        raise ParseError(p.file, p.line, "snippet no trigger defined")
-    return trigger, description, options
+            trigger = remain[7:index].strip()
+            if not trigger:
+                trigger = text[7:]
+            else:
+                description = remain[index+1:-1]
+        return trigger, description
+
+    def _parse_snippet_start(self, i, text):
+        text = text.strip()
+        options = description = ''
+        if text[-1] != '"':
+            # options may exists.
+            parts = text.rsplit(maxsplit=1)
+            if len(parts) != 2:
+                raise ParseError(self.fname, i, "invalid snippet definition")
+            remain, opt = parts
+            if remain[-1] != '"':
+                # no options and description exist.
+                trigger = text[7:]
+            else:
+                trigger, description = self._parse_snippet_description(
+                    text, remain)
+                if description:
+                    options = opt
+        else:
+            trigger, description = self._parse_snippet_description(text, text)
+        trigger = trigger.strip()
+        # Space in trigger or the trigger is regex.
+        if len(trigger.split()) > 1 or "r" in options:
+            if trigger[0] != trigger[-1]:
+                raise ParseError(
+                    self.fname, i,
+                    "invalid snippet trigger definition `{}`".format(trigger))
+            trigger = trigger[1:-1]
+
+        if not trigger:
+            raise ParseError(self.fname, i, "snippet no trigger defined")
+
+        return trigger, description, options
+
+    def parse_global(self, lines, i):
+        line = lines[i]
+        parts = line.split()
+
+        g = Global("unknown", "")
+
+        if len(parts) == 2:
+            g.tp = parts[1]
+
+        items = []
+
+        for j, line in enumerate(lines[i+1:]):
+            if line.rstrip().startswith("endglobal"):
+                g.body = "\n".join(items)
+                self.stmts.append(g)
+                return i + j + 2
+
+            items.append(line)
+
+        raise ParseError(self.fname, i, "no endglobal found")
+
+    def parse_snippet(self, lines, i):
+        line = lines[i]
+
+        trigger, desc, opts = self._parse_snippet_start(i, line)
+
+        s = Snippet(trigger, desc, opts, "")
+        s.fname = self.fname
+        s.line = i
+
+        items = []
+
+        for j, line in enumerate(lines[i+1:]):
+            if line.rstrip().startswith("endsnippet"):
+                s.body = "\n".join(items)
+                self.stmts.append(s)
+                return i + j + 2
+
+            items.append(line)
+
+        raise ParseError(self.fname, i, "no endsnippet found")
+
+    def parse_expand_action(self, lines, i, action):
+        line = lines[i]
+
+        parts = line.split(maxsplit=1)
+
+        if len(parts) != 2:
+            raise ParseError(self.fname, i,
+                             "invalid {} definition".format(action.name))
+
+        content = parts[1]
+        if len(content) < 2 or content[0] != content[-1] or content[0] != '"':
+            raise ParseError(self.fname, i,
+                             "invalid {} definition".format(action.name))
+
+        self.stmts.append(action(content[1:-1]))
+        return i + 1
 
 
-parser = SnipsParser()
+def parse(data, filename="<unknown>"):
+    lines = data.splitlines()
 
+    i = 0
 
-def parse(data, filename=None, debug=False):
-    return parser.parse(data, debug=debug, filename=filename)
+    doc = Doc(filename)
+
+    while i < len(lines):
+        line = lines[i]
+
+        stripped = line.strip()
+
+        if not stripped or stripped[0] == '#':
+            i += 1
+            continue
+
+        if stripped.startswith('priority'):
+            i = doc.parse_priority(lines, i)
+            continue
+
+        if stripped.startswith('global'):
+            i = doc.parse_global(lines, i)
+            continue
+
+        if stripped.startswith('snippet'):
+            i = doc.parse_snippet(lines, i)
+            continue
+
+        if stripped.startswith('extends'):
+            i = doc.parse_extends(lines, i)
+            continue
+
+        if stripped.startswith(PreExpand.name):
+            i = doc.parse_expand_action(lines, i, PreExpand)
+            continue
+
+        if stripped.startswith(PostJump.name):
+            i = doc.parse_expand_action(lines, i, PostJump)
+            continue
+
+        raise ParseError(filename, i, "unknown syntax")
+
+        i += 1
+
+    return doc.stmts

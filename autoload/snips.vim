@@ -1,5 +1,16 @@
 let s:py = has('python3') ? 'py3' : 'py'
 let s:pyeval = function(has('python3') ? 'py3eval' : 'pyeval')
+let s:timer = -1
+let s:current_line = -1
+let s:expand_end_line = -1
+let s:pos = {}
+
+
+func! s:err(message)
+  echohl Error
+  echo a:message
+  echohl None
+endfunc
 
 func! snips#import() abort
   try
@@ -18,98 +29,156 @@ func! snips#import() abort
 
   try
     exe s:py 'completor.get("common").hooks.append(completor_snips.Snips.filetype)'
+    call s:set_snippets_dirs()
   catch /^Vim(py\(thon\|3\)):/
     call s:err('Fail to add snips hook')
   endtry
 endfunc
 
-let s:current_line = -1
-let s:pos = {}
+
+func! s:render(res, lnum) abort
+  if empty(a:res.content)
+    let lines = []
+    let current = ''
+    let remain_lines = []
+  else
+    let lines = split(a:res.content, "\n")
+    let current = lines[0]
+    let remain_lines = lines[1:]
+  endif
+
+  call setline(a:lnum, current)
+  if s:expand_end_line >= a:lnum + 1
+    call deletebufline('', a:lnum+1, s:expand_end_line)
+  endif
+
+  call append(a:lnum, remain_lines)
+
+  let s:expand_end_line = a:lnum+len(remain_lines)
+  let s:current_line = a:lnum
+
+  if a:res.lnum == -1
+    let s:pos = {}
+
+    if len(lines) == 0
+      let s:pos.line = a:lnum
+    else
+      let s:pos.line = a:lnum + len(lines) - 1
+    endif
+
+    if a:res.end_col > 0
+      let s:pos.col = a:res.end_col + 1
+    else
+      let s:pos.col = col([s:pos.line, '$'])
+    endif
+
+    let s:pos.orig_col = a:res.orig_col + 1
+    call cursor(s:pos.line, s:pos.col)
+  else
+    let s:pos = #{line: a:lnum+a:res.lnum, col: a:res.col+1, orig_col: a:res.orig_col+1}
+    call s:select(s:pos.line, s:pos.col, a:res.length)
+  endif
+
+  call timer_start(0, {t -> s:enable_text_change()})
+  return ''
+endfunc
 
 " Expand the snippet.
 func! snips#expand() abort
+  call s:end_expand()
+
   let [_, lnum, column, _, _ ] = getcurpos()
-  let text = getline('.')[:column-1]
-  let last = split(text, '\s\+', 1)[-1]
-  if empty(last)
-    return ''
-  endif
-  let res = s:expand(last)
+  let line = getline('.')
+
+  let res = s:expand(lnum, column, line)
   if empty(res)
     return ''
   endif
 
-  let lines = split(res.content, "\n")
-  let remain = len(text) - len(last)
-  if remain > 0
-    let current = text[:remain] . lines[0]
-  else
-    let current = lines[0]
-  endif
-  call setline(lnum, current)
-  call append(lnum, lines[1:])
-  let s:current_line = lnum
-  if res.lnum == -1
-    let s:pos = #{line: lnum+len(lines)-1}
-    let s:pos.col = col([s:pos.line, '$'])
-    call cursor(s:pos.line, s:pos.col)
-  else
-    let s:pos = #{line: lnum+res.lnum, col: res.col+1}
-    call cursor(s:pos.line, s:pos.col)
-    call s:select(s:pos.line, s:pos.col, res.length)
-  endif
+  let v = s:render(res, lnum)
   call timer_start(0, {t -> s:setup_expand()})
-  return ''
+  return v
 endfunc
 
 func! snips#jump_next() abort
-  call Log("jump")
   if s:current_line == -1
     return ''
   endif
   let m = mode()
-  call Log(string(m))
   if m != 's' && m != 'i'
     return ''
   endif
-  call Log("call jump")
   let res = s:jump('forward')
-  call Log(string(res))
   if empty(res)
     return ''
   endif
   if res.lnum == -1
     return ''
   endif
-  call Log(string([res]))
   let lnum = s:current_line
-  let s:pos = #{line: lnum+res.lnum, col: res.col+1}
+  let s:pos = #{line: lnum+res.lnum, col: res.col+1, orig_col: res.orig_col+1}
   call cursor(s:pos.line, s:pos.col)
   call s:select(s:pos.line, s:pos.col, res.length)
   return ''
 endfunc
+
 
 func! s:setup_expand()
   smap <expr> <c-s> snips#jump_next()
   imap <expr> <c-s> snips#jump_next()
 
   " Set up ticker.
-  call timer_start(300, function('s:on_expand_tick'), #{repeat: -1})
-
-  let s:callback_id = listener_add(function('s:callback'))
+  let s:timer = timer_start(300, function('s:on_expand_tick'), #{repeat: -1})
 endfunc
 
 imap <leader>z <C-R>=snips#expand()<CR>
 
+
+func! s:enable_text_change()
+  augroup snips_text_change
+    autocmd!
+    autocmd TextChanged * :call s:on_text_change()
+    autocmd TextChangedI * :call s:on_text_change()
+  augroup END
+endfunc
+
+
+func! s:disable_text_change()
+  augroup snips_text_change
+    autocmd!
+  augroup END
+endfunc
+
+
 func! s:on_expand_tick(timer)
+  if s:current_line == -1
+    return
+  endif
+
   let m = mode()
   if m == 's' || m == 'i'
     return
   endif
-  call listener_remove(s:callback_id)
-
   " Clear ticker.
-  call timer_stop(a:timer)
+  call s:end_expand()
+endfunc
+
+
+func s:end_expand()
+  call timer_stop(s:timer)
+  call s:teardown_expand()
+endfunc
+
+
+func s:teardown_expand()
+  let s:expand_end_line = -1
+
+  if s:current_line == -1
+    return
+  endif
+
+  call s:disable_text_change()
+
   call Log("teardown")
   sunmap <expr> <c-s>
   iunmap <expr> <c-s>
@@ -118,11 +187,9 @@ func! s:on_expand_tick(timer)
   let s:current_col = -1
 endfunc
 
-func! s:callback(bufnr, start, end, added, changes)
-  call s:on_text_change()
-endfunc
-
 func! s:on_text_change() abort
+  call s:disable_text_change()
+
   let c = col('.') - 2
   let l = line('.')
   let line_diff = l - s:pos.line
@@ -132,92 +199,27 @@ func! s:on_text_change() abort
   else
     let lines = getline(s:pos.line, l)
   endif
-  call Log(string(lines).'|'.string(s:pos.line))
+
+  let col = s:pos.orig_col
+
   if len(lines) <= 1
-    call Log(string([s:pos.col-1, c]))
-    if c < s:pos.col - 1
+    if c < col - 1
       let lines = []
     elseif line_diff >= 0
-      let lines[0] = lines[0][s:pos.col-1:c]
+      let lines[0] = lines[0][col-1:c]
     endif
   else
-    let lines[0] = lines[0][s:pos.col-1:]
+    let lines[0] = lines[0][col-1:]
     let lines[-1] = lines[-1][:c]
   endif
+  
   let content = join(lines, "\n")
-  call Log(string(content).'|'.string(lines))
-  call Log(string(s:pos))
-  let res = s:update_placeholder(content, line_diff, col_pos)
+  let res = s:rerender(content)
   if empty(res)
     return
   endif
-  call Log(string(res.updates))
-  call timer_start(0, {t -> s:update_text(res)})
-endfunc
 
-func! s:update_text(res) abort
-  call listener_remove(s:callback_id)
-  try
-    call Log("before updates")
-    for u in a:res.updates
-      call s:set_text(s:current_line, u)
-    endfor
-    call Log(string(["after updates", a:res.lnum]))
-    let s:pos.line = s:current_line + a:res.lnum
-    let s:pos.col = a:res.col + 1
-    call s:select(s:pos.line, s:pos.col, 0)
-  finally
-    let s:callback_id = listener_add(function('s:callback'))
-  endtry
-endfunc
-
-func! s:set_text(base_line, item) abort
-  let lnum = a:base_line + a:item.line_offset
-  let text = getline(lnum)
-  call Log(string([lnum, text, a:item, string(a:item.content)]))
-  if a:item.col_offset == 0
-    let prefix = ''
-  else
-    let prefix = text[:a:item.col_offset-1]
-  endif
-  let suffix = text[a:item.col_offset+a:item.length:]
-  let lines = split(a:item.content, "\n", 1)
-  call Log(string(["line replace", prefix, suffix, lines]))
-  if len(lines) > 1
-    if a:item.col_offset == 0 && a:item.length == 0
-      call append(lnum - 1, lines[0])
-    else
-      call setline(lnum, prefix . lines[0])
-    endif
-    if len(lines) > 2
-      call append(lnum, lines[1:-2])
-    endif
-    if empty(lines[-1])
-      return
-    endif
-    if suffix == '' && a:item.length == 0
-      call append(lnum + len(lines) - 2, lines[-1])
-    else
-      call setline(lnum + len(lines) - 1, lines[-1] . suffix)
-    endif
-  elseif len(lines) == 1
-    call Log(string([lnum, prefix, lines[0], suffix]))
-    if prefix == '' && suffix == '' && a:item.length == 0
-      call append(lnum - 1 , lines[0])
-    else
-      call setline(lnum, prefix . lines[0] . suffix)
-    endif
-  else
-    call setline(lnum, prefix . suffix)
-    call Log(string(["aa", lnum, prefix, suffix]))
-  endif
-endfunc
-
-func! s:add_text(lnum, prefix, suffix, text)
-  if a:prefix == '' && a:suffix == ''
-    call append(a:lnum, text)
-  endif
-  return a:lnum + 1
+  call timer_start(0, {t -> s:render(res, s:current_line)})
 endfunc
 
 func! s:select(lnum, start, length)
@@ -226,10 +228,8 @@ func! s:select(lnum, start, length)
   else
     let end = a:start + a:length - 1
   endif
-  call Log(string([a:start, end]))
-  if a:start == end
+  if a:length == 0
     let start = virtcol([a:lnum, a:start - 1])
-    call Log("aaa".string(start))
     let action = 'i'
     if start != 0
       let action = 'a'
@@ -242,9 +242,31 @@ func! s:select(lnum, start, length)
   call feedkeys("\<ESC>v".a:lnum.'G'.end.'|o'.a:lnum.'G'.start."|o\<C-G>")
 endfunc
 
-func! s:expand(trigger) abort
-  let fn = expand("%:t")
-  exe s:py 'res = snips.expand(vim.eval("fn"), vim.eval("&ft"), vim.eval("a:trigger"))'
+func! s:expand(lnum, column, line) abort
+  let tabstop = &softtabstop
+
+  if tabstop == 0
+    let tabstop = &tabstop
+  elseif tabstop < 0
+    let tabstop = &shiftwidth
+  endif
+
+  let context = #{
+        \ fname: expand("%:t"),
+        \ fpath: expand("%"),
+        \ ftype: &ft,
+        \ lnum: a:lnum - 1,
+        \ column: a:column - 1,
+        \ text: a:line,
+        \ tabstop: tabstop,
+        \ expandtab: &expandtab,
+        \ shiftwidth: &shiftwidth,
+        \ indent: indent('.'),
+        \ }
+
+  let s:context = context
+
+  exe s:py 'res = snips.expand(vim.eval("context"))'
   return s:pyeval('res')
 endfunc
 
@@ -253,12 +275,15 @@ func! s:jump(direction) abort
   return s:pyeval('res')
 endfunc
 
+func! s:rerender(content) abort
+  exe s:py 'res = snips.rerender(vim.eval("a:content"))'
+  return s:pyeval('res')
+endfunc
+
 func! s:reset_jump() abort
   exe s:py 'snips.reset_jump(vim.eval("&ft"))'
 endfunc
 
-func! s:update_placeholder(content, line, col) abort
-  let fn = expand("%:t")
-  exe s:py 'res = snips.update_placeholder(vim.eval("fn"), vim.eval("&ft"), vim.eval("a:content"), vim.eval("a:line"), vim.eval("a:col"))'
-  return s:pyeval('res')
+func! s:set_snippets_dirs() abort
+  exe s:py 'snips.set_snippets_dirs(vim.eval("g:snips_snippets_dirs"))'
 endfunc

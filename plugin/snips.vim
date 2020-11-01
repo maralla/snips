@@ -4,7 +4,6 @@ endif
 
 let g:loaded_snips_plugin = 1
 
-
 function! s:err(msg)
   echohl Error
   echo a:msg
@@ -29,3 +28,5 @@ augroup completor_snips
   autocmd!
   autocmd InsertEnter * call s:enable()
 augroup END
+
+let g:snips_snippets_dirs = get(g:, 'snips_snippets_dirs', [])
