@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 
+import re
 import logging
+import string
 import collections
 from .interpolation import SnippetUtil, tab_indent
 
 logger = logging.getLogger('completor')
+escape_chars = 'nt'
 
 VISUAL_NUM = 9999
 
@@ -61,6 +64,65 @@ class _Location(object):
         return "{}:{}".format(self.line, self.column)
 
 
+class _Transformation(object):
+    def __init__(self, regex, replacement, options):
+        self.regex = regex
+        self.replacement = replacement
+        self.options = options
+        self.reference = -1
+
+    def __repr__(self):
+        return "<Transformation {}/{}/{}/{}>".format(
+            self.reference, self.regex, self.replacement, self.options)
+
+
+class _ReplacementState(object):
+    UPPER_NEXT = 'u'
+    LOWER_NEXT = 'l'
+    UPPER_TILL = 'U'
+    LOWER_TILL = 'L'
+    TILL_END = 'E'
+
+    TILL_OP = list(UPPER_TILL + LOWER_TILL)
+    OP = list(UPPER_NEXT + LOWER_NEXT) + TILL_OP
+
+    def __init__(self):
+        self.state = ''
+
+    def transit(self, state):
+        if state == self.TILL_END:
+            self.state = ''
+            return
+
+        if self.state in self.TILL_OP:
+            return
+
+        if state in self.OP:
+            self.state = state
+        else:
+            self.state = ''
+
+    def transform(self, s):
+        if not s:
+            return s
+
+        if self.state == self.LOWER_TILL:
+            return s.lower()
+
+        if self.state == self.UPPER_TILL:
+            return s.upper()
+
+        if self.state == self.LOWER_NEXT:
+            self.state = ''
+            return s[0].lower() + s[1:]
+
+        if self.state == self.UPPER_NEXT:
+            self.state = ''
+            return s[0].upper() + s[1:]
+
+        return s
+
+
 class _SnippetPart(object):
     TEXT = 'text'
     INTERPOLATION = 'interp'
@@ -77,6 +139,7 @@ class _SnippetPart(object):
         self.ph_text = ''
         self.nest_level = 0
         self.placeholders = {}
+        self.transformation = None
 
         self.lnum = -1
         self.col = -1
@@ -101,6 +164,96 @@ class _SnippetPart(object):
             if d.type == self.PLACEHOLDER:
                 self._adjust_location(d, d.start.line, d.start.column)
 
+    def _try_apply_transformation(self, text):
+        tran = self.transformation
+
+        if tran is None:
+            return text
+
+        if not tran.regex or not tran.replacement:
+            return ''
+
+        if 'g' in tran.options:
+            matches = list(re.finditer(tran.regex, text))
+        else:
+            matches = []
+            m = re.match(tran.regex, text)
+            if m:
+                matches.append(m)
+
+        if not matches:
+            return ''
+
+        res = ''
+        for match in matches:
+            groups = (match.group(),) + match.groups()
+            res += self._parse_replacement(tran.replacement, groups)
+        return res
+
+    def _parse_replacement(self, text, groups):
+        res = ''
+
+        i = 0
+        size = len(text)
+        state = _ReplacementState()
+
+        while i < size:
+            c = text[i]
+            if c == '\\' and size > i + 1:
+                n = text[i+1]
+                i += 2
+
+                if n in escape_chars:
+                    res += c + n
+                    continue
+
+                if n not in state.OP:
+                    res += state.transform(n)
+                else:
+                    state.transit(n)
+
+                continue
+
+            # (?no:text:other text)
+            if c == '(' and size - i >= 4 and text[i+1] == '?':
+                r = _parse_replacement_condition(text, i+2)
+                if not r:
+                    res += state.transform(c)
+                    i += 1
+                    continue
+
+                n, data, alternative, j = r
+                if len(groups) <= n or groups[n] is None:
+                    data = alternative
+                res += state.transform(data)
+
+                i = j
+                continue
+
+            if c == '$':
+                n = ''
+                j = i + 1
+                while j < size and text[j] in string.digits:
+                    n += text[j]
+                    j += 1
+
+                if not n:
+                    res += state.transform(c)
+                    i += 1
+                    continue
+
+                n = int(n)
+                if len(groups) > n and groups[n] is not None:
+                    res += state.transform(groups[n])
+
+                i = j
+                continue
+
+            i += 1
+            res += state.transform(c)
+
+        return res
+
     def render(self, g, context, ph, is_nested=False):
         text = ''
 
@@ -118,12 +271,12 @@ class _SnippetPart(object):
                     for d in self.default:
                         v += d.render(g, context, is_nested=True, ph=ph)
                 else:
-                    v = p.ph_text
+                    v = self._try_apply_transformation(p.ph_text)
             else:
                 v = self.ph_text
                 p = ph.get(self.number)
                 if p:
-                    v = p.ph_text
+                    v = self._try_apply_transformation(p.ph_text)
                     self._adjust_location(p, p.start.line, p.start.column)
 
             text = v
@@ -206,7 +359,10 @@ class Snippet(Base):
 
             # Escape.
             if c == '\\':
-                current.append_literal(body[i+1])
+                v = body[i+1]
+                if v in escape_chars:
+                    v = c + v
+                current.append_literal(v)
                 i += 2
                 continue
 
@@ -217,9 +373,10 @@ class Snippet(Base):
 
                 p, j = self._parse_tabstop(body, i + 1, i, nest)
 
-                exist = self.placeholders.get(p.number)
-                if not exist or exist.nest_level > nest:
-                    self.placeholders[p.number] = p
+                if p.transformation is None:
+                    exist = self.placeholders.get(p.number)
+                    if not exist or exist.nest_level > nest:
+                        self.placeholders[p.number] = p
 
                 parts.append(p)
                 current = _SnippetPart(start_offset=j)
@@ -264,12 +421,41 @@ class Snippet(Base):
         parts.append(current)
         return parts, i
 
+    def _parse_transformation(self, data, i):
+        parts = ['', '', '']
+        current = 0
+
+        while len(data) > i:
+            c = data[i]
+            if c == '\\':
+                parts[current] += c + data[i+1]
+                i += 2
+                continue
+
+            if c == '/':
+                current += 1
+
+                if current > 3:
+                    raise InvalidTabstop(self.fname, self.line)
+
+                i += 1
+                continue
+
+            if current == 2 and c == '}':
+                return _Transformation(*parts), i+1
+
+            parts[current] += c
+            i += 1
+
+        raise InvalidTabstop(self.fname, self.line)
+
     # $12
     # ${12:self, }
     # ${12:Default value $0 111.}
     # ${12}
     # ${12:hello ${3:world} yoyo}
     # ${12:hello ${3:world ${4:ppppp} qq} yoyo}
+    # ${12/(.+)/ /g}
     def _parse_tabstop(self, data, i, start, nest):
         p = _SnippetPart(_SnippetPart.PLACEHOLDER, start_offset=start)
         p.nest_level = nest
@@ -298,6 +484,13 @@ class Snippet(Base):
         if data[j] == '}':
             p.end_offset = j + 1
             return p, j + 1
+
+        if data[j] == '/':
+            tran, j = self._parse_transformation(data, j+1)
+            tran.reference = p.number
+            p.end_offset = j
+            p.transformation = tran
+            return p, j
 
         if data[j] != ':':
             raise InvalidTabstop(self.fname, self.line)
@@ -572,3 +765,58 @@ def _parse_tabstop_number(data, i):
         n += data[i]
         i += 1
     return n, i
+
+
+def _parse_replacement_condition(text, i):
+    j = i
+    while True:
+        p = text.find(')', j)
+        if p < 0:
+            return
+
+        if text[p-1] == '\\':
+            j = p + 1
+            continue
+
+        break
+
+    content = text[i:p]
+    parts = content.split(':', 2)
+
+    if len(parts) < 2:
+        return
+
+    try:
+        n = int(parts[0])
+    except ValueError:
+        return
+
+    second = ''
+    if len(parts) == 3:
+        second = parts[2]
+
+    return n, _unescape(parts[1]), _unescape(second), p + 1
+
+
+# 9\d
+def _unescape(text):
+    i = 0
+    res = ''
+    size = len(text)
+
+    while i < size:
+        c = text[i]
+
+        if c == '\\' and size > i+1:
+            n = text[i+1]
+            if n in escape_chars:
+                res += c + n
+            else:
+                res += n
+            i += 2
+            continue
+
+        res += c
+        i += 1
+
+    return res
