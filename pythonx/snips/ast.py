@@ -129,6 +129,7 @@ class _SnippetPart(object):
             text = v
         elif self.type == self.INTERPOLATION:
             phs = {p.number: p.ph_text for p in ph.values()}
+            logger.info("%r", phs)
             interp = Interpolation(self.literal)
             text = interp.gen_text(g, context, phs)
 
@@ -181,6 +182,9 @@ class Snippet(Base):
         self.current_jump = None
         self.current_g = None
         self.current_context = None
+
+    def is_block(self):
+        return 'b' in self.options
 
     def clone(self):
         """Clone the snippet object.
@@ -354,6 +358,8 @@ class Snippet(Base):
         context['_line'] = 0
         context['_column'] = len(text)
 
+        logger.info("%r", self.body_parts)
+
         for part in self.body_parts:
             if part.type is None:
                 continue
@@ -387,7 +393,7 @@ class Snippet(Base):
             else:
                 line = text[:i]
 
-            indented, offset = tab_indent(context, line)
+            indented, offset = tab_indent(context, line, options=self.options)
 
             logger.info("line %r %r", indented, offset)
             for p in line_map.get(lines, []):
@@ -441,10 +447,13 @@ class Snippet(Base):
         for s in p.default:
             if s.type != _SnippetPart.PLACEHOLDER:
                 continue
-            self.placeholders.pop(s.number)
-            numbers.append(s.number)
 
-            self._remove_ph(s, numbers)
+            ph = self.placeholders.get(s.number)
+            if ph is s:
+                self.placeholders.pop(s.number)
+                numbers.append(s.number)
+
+                self._remove_ph(s, numbers)
 
     def reset(self):
         pass
@@ -504,25 +513,30 @@ class Interpolation(Base):
             return self.render_python(content[2:].lstrip(), g, context, phs)
         if content.startswith('!v'):
             return self.render_vim(content[2:].lstrip())
-        return content
+
+        # shell command.
+        return self.render_shell(content)
 
     def render_python(self, codes, g, context, phs):
         snip = context.get('snip')
         if snip is None:
             snip = context['snip'] = SnippetUtil(context)
-        snip.reset_indent()
-
-        try:
-            local = {
+            snip._local = {
                 'fn': context['fname'],
                 'snip': snip,
-                't': phs,
             }
+            snip.c = ''
+
+        snip._local['t'] = phs
+        snip.reset_indent()
+        snip.rv = ''
+
+        try:
             g['snip'] = snip
-            exec(codes, g, local)
+            exec(codes, g, snip._local)
         finally:
             g.pop('snip')
-            snip.c = ''
+            snip.c = codes
 
         logger.info("py %r", snip.rv)
         return snip.rv
@@ -530,6 +544,11 @@ class Interpolation(Base):
     def render_vim(self, codes):
         import vim
         return str(vim.eval(codes))
+
+    def render_shell(self, command):
+        import subprocess
+        out = subprocess.check_output(command.split())
+        return out.strip().decode('utf-8')
 
 
 class ParseError(Exception):

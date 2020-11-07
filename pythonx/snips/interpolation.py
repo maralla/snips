@@ -3,8 +3,8 @@
 import os
 
 
-def tab_indent(context, line):
-    if not line:
+def tab_indent(context, line, options=''):
+    if not line or 'b' not in options:
         return line, 0
 
     size = len(line)
@@ -48,7 +48,7 @@ class SnippetUtil(object):
         if self._context['expandtab']:
             prefix = ' ' * indent
         else:
-            amount = indent / self._context['tabstop']
+            amount = int(indent / self._context['tabstop'])
             prefix = '\t' * amount
         return prefix + line
 

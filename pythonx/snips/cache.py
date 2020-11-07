@@ -96,6 +96,25 @@ def _ident(text, index):
     return ident, index
 
 
+def _get_snip(snips, trigger, ident_trigger, index, text, context):
+    _, s = snips.get(trigger)
+    if s and not s.is_block():
+        return
+
+    if s is None:
+        if not ident_trigger:
+            return
+
+        _, s = snips.get(ident_trigger)
+        if not s or s.is_block():
+            return
+
+        context['_prefix'] = text[:index+1]
+        context['_suffix'] = text[context['column']:]
+
+    return s
+
+
 def expand(context):
     context = Context(context)
 
@@ -107,33 +126,26 @@ def expand(context):
     ftype = context['ftype']
     _try_init_snippets(ftype)
 
-    snips = cache.get(ftype)
-    if snips is None:
-        snips = cache.get(_ALL)
-        if snips is None:
-            return {}
-
     trigger = text.strip()
-    identTrigger, index = _ident(text, context['column'])
+    ident_trigger, index = _ident(text, context['column'])
+
+    s = None
 
     try:
-        logger.info("context: %r", context)
-
-        s = snips.snippets.get(trigger)
-        if s is None and identTrigger:
-            s = snips.snippets.get(identTrigger)
-            if s is not None:
-                context['_prefix'] = text[:index+1]
-                context['_suffix'] = text[context['column']:]
+        snips = cache.get(ftype)
+        if snips:
+            s = _get_snip(snips, trigger, ident_trigger, index, text, context)
 
         if s is None:
             snips = cache.get(_ALL, {})
-            s = snips.get(trigger, None)
-            if s is None:
-                return {}
+            s = _get_snip(snips, trigger, ident_trigger, index, text, context)
 
-        _, snippet = s
-        snippet = snippet.clone()
+        if s is None:
+            return {}
+
+        logger.info("context: %r", context)
+
+        snippet = s.clone()
         g.current_snippet = snippet
         g.current_snips_info = snips
         content, end = snippet.render(snips.globals, context)
@@ -208,9 +220,10 @@ def _dumb_print(*args, **kwargs):
 class SnipInfo(object):
     def __init__(self):
         import vim
+        import os
         bs = dict(builtins.__dict__)
         bs['print'] = _dumb_print
-        self.globals = {'__builtins__': bs, 'vim': vim}
+        self.globals = {'__builtins__': bs, 'vim': vim, 'os': os}
         self.extends = set([])
         self.snippets = {}
 
@@ -219,7 +232,7 @@ class SnipInfo(object):
             return
         exec(g.body, self.globals)
 
-    def get(self, key, default=None):
+    def get(self, key, default=(0, None)):
         return self.snippets.get(key, default)
 
     def add_items(self, items):

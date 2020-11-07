@@ -74,6 +74,7 @@ func! s:render(res, lnum) abort
 
     let s:pos.orig_col = a:res.orig_col + 1
     call cursor(s:pos.line, s:pos.col)
+    call timer_start(0, {t -> s:end_expand()})
   else
     let s:pos = #{line: a:lnum+a:res.lnum, col: a:res.col+1, orig_col: a:res.orig_col+1}
     call s:select(s:pos.line, s:pos.col, a:res.length)
