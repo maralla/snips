@@ -59,5 +59,6 @@ write_function_docstring(t, snip) `
     assert d[7].type == 'interp'
     assert d[11].type == 'interp'
 
-    s.body = 'def ${1:fname}(`!p snip.rv = "self, " if snip.indent else ""`$2):\n\t$0'
-    print(s._parse_body())
+    s.body = 'def ${1:fname}(`!p snip.rv = "self, " if snip.indent else ""`$2):\n\t$0'  # noqa
+    d = s._parse_body()[0]
+    assert d[3].literal == '!p snip.rv = "self, " if snip.indent else ""'

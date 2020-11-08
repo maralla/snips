@@ -391,14 +391,21 @@ class Snippet(Base):
                     _SnippetPart.INTERPOLATION, start_offset=i)
 
                 j = i + 1
+
+                matched = False
+
                 while j < len(body):
                     d = body[j]
-                    # if d == '\\':
-                    #     current.append_literal(body[j+1])
-                    #     j += 2
-                    #     continue
+                    if d == '\\' and len(body) > j + 1:
+                        n = body[j+1]
+                        if n in escape_chars:
+                            n = d + n
+                        current.append_literal(n)
+                        j += 2
+                        continue
 
                     if d == '`':
+                        matched = True
                         i = current.end_offset = j + 1
                         parts.append(current)
                         current = _SnippetPart(start_offset=j+1)
@@ -407,6 +414,10 @@ class Snippet(Base):
                     current.append_literal(d)
                     j += 1
 
+                if not matched:
+                    current = _SnippetPart(start_offset=i)
+                    current.append_literal(c)
+                    i += 1
                 continue
 
             if c == '}' and in_placeholder:
