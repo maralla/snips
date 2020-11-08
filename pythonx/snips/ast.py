@@ -318,7 +318,7 @@ class Snippet(Base):
         self.current_context = None
 
     def is_block(self):
-        return 'b' in self.options
+        return not self.options or 'b' in self.options
 
     def clone(self):
         """Clone the snippet object.
@@ -564,7 +564,8 @@ class Snippet(Base):
             else:
                 line = text[:i]
 
-            indented, offset = tab_indent(context, line, options=self.options)
+            indented, offset = tab_indent(
+                context, line, is_block=self.is_block)
 
             for p in line_map.get(lines, []):
                 if p.start.line == lines:

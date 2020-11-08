@@ -3,8 +3,11 @@
 import os
 
 
-def tab_indent(context, line, options=''):
-    if not line or 'b' not in options:
+def tab_indent(context, line, is_block=None):
+    if not line:
+        return line, 0
+
+    if is_block and not is_block():
         return line, 0
 
     size = len(line)
