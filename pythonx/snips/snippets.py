@@ -277,6 +277,9 @@ class SnipInfo(object):
 
     def _load_in_dir(self, ft, d):
         logger.info("load in %s, %s", d, ft)
+        if not ft:
+            ft = 'all'
+
         files = glob.glob(os.path.join(d, '{}.snippets'.format(ft)))
         files.extend(glob.glob(os.path.join(d, '{}_*.snippets'.format(ft))))
         files.extend(glob.glob(os.path.join(d, ft, '*')))
