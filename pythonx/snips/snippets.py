@@ -4,7 +4,11 @@ import glob
 import os
 import logging
 import string
-import builtins
+
+try:
+    import builtins
+except ImportError:
+    import future_builtins as builtins
 
 from .parser import parse
 from .ast import Extends, Priority, Global, Snippet
