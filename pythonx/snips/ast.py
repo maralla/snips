@@ -753,22 +753,39 @@ def _match_conditional_replacement(text, i, groups):
     if c != '(' or size - i < 4 or text[i+1] != '?':
         return v, 0, False
 
-    j = i + 2
-    while True:
-        p = text.find(')', j)
-        if p < 0:
-            return v, 0, False
+    parts = ['', '', '']
+    current = 0
+    matched = False
 
-        if text[p-1] == '\\':
-            j = p + 1
+    j = i + 2
+    while j < size:
+        c = text[j]
+
+        if c == '\\' and size > j+1:
+            parts[current] += _escape(text[j+1])
+            j += 2
             continue
 
-        break
+        # $1, $2
+        data, p, ok = _match_replacement_reference(text, j, groups)
+        if ok:
+            parts[current] += data
+            j = p
+            continue
 
-    content = text[i+2:p]
-    parts = content.split(':', 2)
+        j += 1
 
-    if len(parts) < 2:
+        if c == ')':
+            matched = True
+            break
+
+        if c == ':':
+            current += 1
+            continue
+
+        parts[current] += c
+
+    if not matched or not parts[0]:
         return v, 0, False
 
     try:
@@ -778,38 +795,12 @@ def _match_conditional_replacement(text, i, groups):
 
     data = ''
 
-    if len(groups) <= n or groups[n] is None:
-        if len(parts) == 3:
-            data = _parse_replacement_group(parts[2], groups)
+    if len(groups) > n and groups[n] is not None:
+        data = parts[1]
     else:
-        data = _parse_replacement_group(parts[1], groups)
+        data = parts[2]
 
-    return data, p + 1, True
-
-
-def _parse_replacement_group(text, groups):
-    i = 0
-    size = len(text)
-
-    res = ''
-
-    while i < size:
-        c = text[i]
-        if c == '\\' and size > i + 1:
-            res += _escape(text[i+1])
-            i += 2
-            continue
-
-        ref, j, ok = _match_replacement_reference(text, i, groups)
-        if ok:
-            res += ref
-            i = j
-            continue
-
-        res += c
-        i += 1
-
-    return res
+    return data, j, True
 
 
 def _match_replacement_reference(text, i, groups):

@@ -36,6 +36,7 @@ def test_match_replacement_reference(ref, expected):
     ('(?3:uu:)', ('', 8, True)),
     ('(?3:uu:ii)', ('ii', 10, True)),
     ('(?2:$0:ii)', ('match0', 10, True)),
+    (r'(?3:uu:\:=)', (':=', 11, True)),
     (r'(?2:\$0:ii)', ('$0', 11, True)),
     (r'(?2:0\):ii)', ('0)', 11, True)),
     (r'(?3:$0:\t\($10\)\n$a)', ('\\t(match10)\\n$a', 21, True)),
