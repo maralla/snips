@@ -180,7 +180,6 @@ func s:teardown_expand()
 
   call s:disable_text_change()
 
-  call Log("teardown")
   sunmap <expr> <c-s>
   iunmap <expr> <c-s>
   call s:reset_jump()
@@ -191,9 +190,16 @@ endfunc
 func! s:on_text_change() abort
   call s:disable_text_change()
 
-  let c = col('.') - 2
+  let current = col('.')
+  let c = current - 2
   let l = line('.')
   let line_diff = l - s:pos.line
+
+  if line_diff != 0 || current < s:pos.orig_col
+    call timer_start(0, {_ -> s:end_expand()})
+    return
+  endif
+
   let col_pos = c + 1
   if line_diff < 0
     let lines = []
