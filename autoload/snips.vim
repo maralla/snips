@@ -42,7 +42,7 @@ func! s:render(res, lnum) abort
     let current = ''
     let remain_lines = []
   else
-    let lines = split(a:res.content, "\n")
+    let lines = split(a:res.content, "\n", v:true)
     let current = lines[0]
     let remain_lines = lines[1:]
   endif

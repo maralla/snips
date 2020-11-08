@@ -7,7 +7,10 @@ import collections
 from .interpolation import SnippetUtil, tab_indent
 
 logger = logging.getLogger('completor')
-escape_chars = 'nt'
+escape_chars = {
+    'n': '\\n',
+    't': '\\t',
+}
 
 VISUAL_NUM = 9999
 
@@ -204,7 +207,7 @@ class _SnippetPart(object):
                 i += 2
 
                 if n in escape_chars:
-                    res += c + n
+                    res += escape_chars[n]
                     continue
 
                 if n not in state.OP:
@@ -215,37 +218,16 @@ class _SnippetPart(object):
                 continue
 
             # (?no:text:other text)
-            if c == '(' and size - i >= 4 and text[i+1] == '?':
-                r = _parse_replacement_condition(text, i+2)
-                if not r:
-                    res += state.transform(c)
-                    i += 1
-                    continue
-
-                n, data, alternative, j = r
-                if len(groups) <= n or groups[n] is None:
-                    data = alternative
+            data, j, ok = _match_conditional_replacement(text, i, groups)
+            if ok:
                 res += state.transform(data)
-
                 i = j
                 continue
 
-            if c == '$':
-                n = ''
-                j = i + 1
-                while j < size and text[j] in string.digits:
-                    n += text[j]
-                    j += 1
-
-                if not n:
-                    res += state.transform(c)
-                    i += 1
-                    continue
-
-                n = int(n)
-                if len(groups) > n and groups[n] is not None:
-                    res += state.transform(groups[n])
-
+            # $0, $1, $2
+            ref, j, ok = _match_replacement_reference(text, i, groups)
+            if ok:
+                res += state.transform(ref)
                 i = j
                 continue
 
@@ -282,7 +264,6 @@ class _SnippetPart(object):
             text = v
         elif self.type == self.INTERPOLATION:
             phs = {p.number: p.ph_text for p in ph.values()}
-            logger.info("%r", phs)
             interp = Interpolation(self.literal)
             text = interp.gen_text(g, context, phs)
 
@@ -359,15 +340,12 @@ class Snippet(Base):
 
             # Escape.
             if c == '\\':
-                v = body[i+1]
-                if v in escape_chars:
-                    v = c + v
-                current.append_literal(v)
+                current.append_literal(_escape(body[i+1]))
                 i += 2
                 continue
 
             # Placeholder.
-            if c == '$' and body[i+1] in '0123456789{':
+            if c == '$' and body[i+1] in string.digits+'{':
                 current.end_offset = i
                 parts.append(current)
 
@@ -397,10 +375,7 @@ class Snippet(Base):
                 while j < len(body):
                     d = body[j]
                     if d == '\\' and len(body) > j + 1:
-                        n = body[j+1]
-                        if n in escape_chars:
-                            n = d + n
-                        current.append_literal(n)
+                        current.append_literal(_escape(body[j+1]))
                         j += 2
                         continue
 
@@ -471,7 +446,7 @@ class Snippet(Base):
         p = _SnippetPart(_SnippetPart.PLACEHOLDER, start_offset=start)
         p.nest_level = nest
 
-        n, j = _parse_tabstop_number(data, i)
+        n, j = _parse_number(data, i)
         if n:
             p.number = int(n)
             p.end_offset = j
@@ -486,7 +461,7 @@ class Snippet(Base):
             n = VISUAL_NUM
             j = i + 6  # i + len('VISUAL')
         else:
-            n, j = _parse_tabstop_number(data, i)
+            n, j = _parse_number(data, i)
             if not n:
                 raise InvalidTabstop(self.fname, self.line)
 
@@ -513,8 +488,6 @@ class Snippet(Base):
         return p, p.end_offset
 
     def _render_placeholders(self, g, context):
-        logger.info("%r", self.placeholders)
-
         for p in self.placeholders.values():
             p.ph_text = ''
 
@@ -541,7 +514,6 @@ class Snippet(Base):
                 d.end.column = column
 
                 p.ph_text += text
-                logger.info("ph text %r", p.ph_text)
 
     def render(self, g, context):
         self.current_g = g
@@ -562,15 +534,11 @@ class Snippet(Base):
         context['_line'] = 0
         context['_column'] = len(text)
 
-        logger.info("%r", self.body_parts)
-
         for part in self.body_parts:
             if part.type is None:
                 continue
 
             text += part.render(g, context, self.placeholders)
-
-        logger.info("%r", text)
 
         line_map = collections.defaultdict(list)
 
@@ -584,7 +552,6 @@ class Snippet(Base):
                 line_map[start_line].append(p)
                 line_map[end_line].append(p)
 
-        logger.info("%r", self.ph_list)
         lines = 0
         end_pos = 0
 
@@ -599,7 +566,6 @@ class Snippet(Base):
 
             indented, offset = tab_indent(context, line, options=self.options)
 
-            logger.info("line %r %r", indented, offset)
             for p in line_map.get(lines, []):
                 if p.start.line == lines:
                     p.start.column += offset
@@ -624,8 +590,6 @@ class Snippet(Base):
             else:
                 self.current_jump = 1
 
-        logger.info("%r", self.ph_list)
-        logger.info("text %r", res)
         return res, end_pos
 
     def rerender(self, content):
@@ -742,7 +706,6 @@ class Interpolation(Base):
             g.pop('snip')
             snip.c = codes
 
-        logger.info("py %r", snip.rv)
         return snip.rv
 
     def render_vim(self, codes):
@@ -770,20 +733,31 @@ class InvalidTabstop(ParseError):
         ParseError.__init__(self, file, line, "invalid tabstop")
 
 
-def _parse_tabstop_number(data, i):
+def _parse_number(data, i):
     n = ''
-    while i < len(data) and data[i] in '0123456789':
+    while i < len(data) and data[i] in string.digits:
         n += data[i]
         i += 1
     return n, i
 
 
-def _parse_replacement_condition(text, i):
-    j = i
+def _match_conditional_replacement(text, i, groups):
+    v = ''
+
+    if not text:
+        return v, 0, False
+
+    c = text[i]
+    size = len(text)
+
+    if c != '(' or size - i < 4 or text[i+1] != '?':
+        return v, 0, False
+
+    j = i + 2
     while True:
         p = text.find(')', j)
         if p < 0:
-            return
+            return v, 0, False
 
         if text[p-1] == '\\':
             j = p + 1
@@ -791,43 +765,75 @@ def _parse_replacement_condition(text, i):
 
         break
 
-    content = text[i:p]
+    content = text[i+2:p]
     parts = content.split(':', 2)
 
     if len(parts) < 2:
-        return
+        return v, 0, False
 
     try:
         n = int(parts[0])
     except ValueError:
-        return
+        return v, 0, False
 
-    second = ''
-    if len(parts) == 3:
-        second = parts[2]
+    data = ''
 
-    return n, _unescape(parts[1]), _unescape(second), p + 1
+    if len(groups) <= n or groups[n] is None:
+        if len(parts) == 3:
+            data = _parse_replacement_group(parts[2], groups)
+    else:
+        data = _parse_replacement_group(parts[1], groups)
+
+    return data, p + 1, True
 
 
-# 9\d
-def _unescape(text):
+def _parse_replacement_group(text, groups):
     i = 0
-    res = ''
     size = len(text)
+
+    res = ''
 
     while i < size:
         c = text[i]
-
-        if c == '\\' and size > i+1:
-            n = text[i+1]
-            if n in escape_chars:
-                res += c + n
-            else:
-                res += n
+        if c == '\\' and size > i + 1:
+            res += _escape(text[i+1])
             i += 2
+            continue
+
+        ref, j, ok = _match_replacement_reference(text, i, groups)
+        if ok:
+            res += ref
+            i = j
             continue
 
         res += c
         i += 1
 
     return res
+
+
+def _match_replacement_reference(text, i, groups):
+    v = ''
+
+    if not text:
+        return v, 0, False
+
+    c = text[i]
+    size = len(text)
+
+    if c != '$' or size <= i + 1:
+        return v, 0, False
+
+    n, j = _parse_number(text, i+1)
+    if not n:
+        return v, 0, False
+
+    n = int(n)
+    if len(groups) > n and groups[n] is not None:
+        v = groups[n]
+
+    return v, j, True
+
+
+def _escape(c):
+    return escape_chars.get(c, c)
