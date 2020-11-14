@@ -5,6 +5,7 @@ import logging
 import string
 import collections
 from .interpolation import SnippetUtil, tab_indent
+from .highlight import hi
 
 logger = logging.getLogger('completor')
 escape_chars = {
@@ -18,9 +19,21 @@ VISUAL_NUM = 9999
 class Base(object):
     fname = '<unknown>'
     line = -1
+    column = -1
+
+    def gen_hi_groups(self):
+        return []
 
 
-class Extends(object):
+class Comment(Base):
+    def __init__(self, content):
+        self.content = content
+
+    def gen_hi_groups(self):
+        return [hi.comment(self.line, self.column, len(self.content)+1)]
+
+
+class Extends(Base):
     def __init__(self, types):
         self.types = types
 
@@ -28,7 +41,7 @@ class Extends(object):
         return "<Extends types={}>".format(",".join(self.types))
 
 
-class Priority(object):
+class Priority(Base):
     def __init__(self, priority):
         self.priority = priority
 
@@ -36,7 +49,7 @@ class Priority(object):
         return "<Priority {}>".format(self.priority)
 
 
-class _ExpandAction(object):
+class _ExpandAction(Base):
     name = "unknown"
 
     def __init__(self, body):
@@ -317,6 +330,8 @@ class Snippet(Base):
         self.current_g = None
         self.current_context = None
 
+        self.hi_groups = []
+
     def is_block(self):
         return not self.options or 'b' in self.options
 
@@ -325,167 +340,6 @@ class Snippet(Base):
         """
         return self.__class__(self.trigger, self.description, self.options,
                               self.body)
-
-    def _parse_body(self, body=None, start=0, in_placeholder=False, nest=0):
-        if body is None:
-            body = self.body
-
-        i = start
-
-        parts = []
-
-        current = _SnippetPart()
-        while i < len(body):
-            c = body[i]
-
-            # Escape.
-            if c == '\\':
-                current.append_literal(_escape(body[i+1]))
-                i += 2
-                continue
-
-            # Placeholder.
-            if c == '$' and body[i+1] in string.digits+'{':
-                current.end_offset = i
-                parts.append(current)
-
-                p, j = self._parse_tabstop(body, i + 1, i, nest)
-
-                if p.transformation is None:
-                    exist = self.placeholders.get(p.number)
-                    if not exist or exist.nest_level > nest:
-                        self.placeholders[p.number] = p
-
-                parts.append(p)
-                current = _SnippetPart(start_offset=j)
-                i = j
-                continue
-
-            # Interpolation.
-            if c == '`':
-                current.end_offset = i
-                parts.append(current)
-                current = _SnippetPart(
-                    _SnippetPart.INTERPOLATION, start_offset=i)
-
-                j = i + 1
-
-                matched = False
-
-                while j < len(body):
-                    d = body[j]
-                    if d == '\\' and len(body) > j + 1:
-                        current.append_literal(_escape(body[j+1]))
-                        j += 2
-                        continue
-
-                    if d == '`':
-                        matched = True
-                        i = current.end_offset = j + 1
-                        parts.append(current)
-                        current = _SnippetPart(start_offset=j+1)
-                        break
-
-                    current.append_literal(d)
-                    j += 1
-
-                if not matched:
-                    current = _SnippetPart(start_offset=i)
-                    current.append_literal(c)
-                    i += 1
-                continue
-
-            if c == '}' and in_placeholder:
-                current.end_offset = i
-                parts.append(current)
-                return parts, i + 1
-
-            current.append_literal(c)
-            i += 1
-
-        current.end_offset = i
-        parts.append(current)
-        return parts, i
-
-    def _parse_transformation(self, data, i):
-        parts = ['', '', '']
-        current = 0
-
-        while len(data) > i:
-            c = data[i]
-            if c == '\\':
-                parts[current] += c + data[i+1]
-                i += 2
-                continue
-
-            if c == '/':
-                current += 1
-
-                if current > 3:
-                    raise InvalidTabstop(self.fname, self.line)
-
-                i += 1
-                continue
-
-            if current == 2 and c == '}':
-                return _Transformation(*parts), i+1
-
-            parts[current] += c
-            i += 1
-
-        raise InvalidTabstop(self.fname, self.line)
-
-    # $12
-    # ${12:self, }
-    # ${12:Default value $0 111.}
-    # ${12}
-    # ${12:hello ${3:world} yoyo}
-    # ${12:hello ${3:world ${4:ppppp} qq} yoyo}
-    # ${12/(.+)/ /g}
-    def _parse_tabstop(self, data, i, start, nest):
-        p = _SnippetPart(_SnippetPart.PLACEHOLDER, start_offset=start)
-        p.nest_level = nest
-
-        n, j = _parse_number(data, i)
-        if n:
-            p.number = int(n)
-            p.end_offset = j
-            return p, j
-
-        if data[i] != '{':
-            raise InvalidTabstop(self.fname, self.line)
-
-        i += 1
-
-        if data[i:].startswith('VISUAL'):
-            n = VISUAL_NUM
-            j = i + 6  # i + len('VISUAL')
-        else:
-            n, j = _parse_number(data, i)
-            if not n:
-                raise InvalidTabstop(self.fname, self.line)
-
-        p.number = int(n)
-
-        if data[j] == '}':
-            p.end_offset = j + 1
-            return p, j + 1
-
-        if data[j] == '/':
-            tran, j = self._parse_transformation(data, j+1)
-            tran.reference = p.number
-            p.end_offset = j
-            p.transformation = tran
-            return p, j
-
-        if data[j] != ':':
-            raise InvalidTabstop(self.fname, self.line)
-
-        parts, i = self._parse_body(data, start=j+1, in_placeholder=True,
-                                    nest=nest+1)
-        p.default = parts
-        p.end_offset = i
-        return p, p.end_offset
 
     def _render_placeholders(self, g, context):
         for p in self.placeholders.values():
@@ -522,7 +376,11 @@ class Snippet(Base):
         text = context.get('_prefix', '')
 
         if self.body and not self.body_parts:
-            self.body_parts, _ = self._parse_body()
+            try:
+                self.body_parts, _ = parse_snippet_body(
+                    self.body, self.placeholders)
+            except BaseParseError:
+                raise InvalidTabstop(self.fname, self.line)
             self.ph_list = sorted(self.placeholders.values(),
                                   key=lambda x: x.number)
 
@@ -662,14 +520,21 @@ class Snippet(Base):
                                     len(self.placeholders))
         return self.jump_position()
 
+    def gen_hi_groups(self):
+        return [hi.keyword(self.line, self.column, 7)] + self.hi_groups
+
     def __repr__(self):
         return "<Snippet trigger={}>".format(self.trigger)
 
 
-class Global(object):
+class Global(Base):
     def __init__(self, tp, body):
         self.tp = tp
         self.body = body
+        self.hi_groups = []
+
+    def gen_hi_groups(self):
+        return [hi.keyword(self.line, self.column, 6)] + self.hi_groups
 
 
 class Interpolation(Base):
@@ -719,7 +584,11 @@ class Interpolation(Base):
         return out.strip().decode('utf-8')
 
 
-class ParseError(Exception):
+class BaseParseError(Exception):
+    pass
+
+
+class ParseError(BaseParseError):
     def __init__(self, file, line, msg):
         self.file = file
         self.line = line
@@ -829,3 +698,163 @@ def _match_replacement_reference(text, i, groups):
 
 def _escape(c):
     return escape_chars.get(c, c)
+
+
+def parse_snippet_body(body, phs, start=0, in_placeholder=False, nest=0):
+    i = start
+
+    parts = []
+
+    current = _SnippetPart()
+    while i < len(body):
+        c = body[i]
+
+        # Escape.
+        if c == '\\':
+            current.append_literal(_escape(body[i+1]))
+            i += 2
+            continue
+
+        # Placeholder.
+        if c == '$' and body[i+1] in string.digits+'{':
+            current.end_offset = i
+            parts.append(current)
+
+            p, j = _parse_tabstop(body, phs, i + 1, i, nest)
+
+            if p.transformation is None:
+                exist = phs.get(p.number)
+                if not exist or exist.nest_level > nest:
+                    phs[p.number] = p
+
+            parts.append(p)
+            current = _SnippetPart(start_offset=j)
+            i = j
+            continue
+
+        # Interpolation.
+        if c == '`':
+            current.end_offset = i
+            parts.append(current)
+            current = _SnippetPart(
+                _SnippetPart.INTERPOLATION, start_offset=i)
+
+            j = i + 1
+
+            matched = False
+
+            while j < len(body):
+                d = body[j]
+                if d == '\\' and len(body) > j + 1:
+                    current.append_literal(_escape(body[j+1]))
+                    j += 2
+                    continue
+
+                if d == '`':
+                    matched = True
+                    i = current.end_offset = j + 1
+                    parts.append(current)
+                    current = _SnippetPart(start_offset=j+1)
+                    break
+
+                current.append_literal(d)
+                j += 1
+
+            if not matched:
+                current = _SnippetPart(start_offset=i)
+                current.append_literal(c)
+                i += 1
+            continue
+
+        if c == '}' and in_placeholder:
+            current.end_offset = i
+            parts.append(current)
+            return parts, i + 1
+
+        current.append_literal(c)
+        i += 1
+
+    current.end_offset = i
+    parts.append(current)
+    return parts, i
+
+# $12
+# ${12:self, }
+# ${12:Default value $0 111.}
+# ${12}
+# ${12:hello ${3:world} yoyo}
+# ${12:hello ${3:world ${4:ppppp} qq} yoyo}
+# ${12/(.+)/ /g}
+def _parse_tabstop(data, phs, i, start, nest):
+    p = _SnippetPart(_SnippetPart.PLACEHOLDER, start_offset=start)
+    p.nest_level = nest
+
+    n, j = _parse_number(data, i)
+    if n:
+        p.number = int(n)
+        p.end_offset = j
+        return p, j
+
+    if data[i] != '{':
+        raise BaseParseError
+
+    i += 1
+
+    if data[i:].startswith('VISUAL'):
+        n = VISUAL_NUM
+        j = i + 6  # i + len('VISUAL')
+    else:
+        n, j = _parse_number(data, i)
+        if not n:
+            raise BaseParseError
+
+    p.number = int(n)
+
+    if data[j] == '}':
+        p.end_offset = j + 1
+        return p, j + 1
+
+    if data[j] == '/':
+        tran, j = _parse_transformation(data, j+1)
+        tran.reference = p.number
+        p.end_offset = j
+        p.transformation = tran
+        return p, j
+
+    if data[j] != ':':
+        raise BaseParseError
+
+    parts, i = parse_snippet_body(data, phs, start=j+1, in_placeholder=True,
+                                  nest=nest+1)
+    p.default = parts
+    p.end_offset = i
+    return p, p.end_offset
+
+
+def _parse_transformation(data, i):
+    parts = ['', '', '']
+    current = 0
+
+    while len(data) > i:
+        c = data[i]
+        if c == '\\':
+            parts[current] += c + data[i+1]
+            i += 2
+            continue
+
+        if c == '/':
+            current += 1
+
+            if current > 3:
+                raise BaseParseError
+
+            i += 1
+            continue
+
+        if current == 2 and c == '}':
+            return _Transformation(*parts), i+1
+
+        parts[current] += c
+        i += 1
+
+    raise BaseParseError

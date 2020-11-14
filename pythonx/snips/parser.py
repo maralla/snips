@@ -1,20 +1,37 @@
 # -*- coding: utf-8 -*-
 
+import logging
 from .ast import ParseError, Extends, Priority, Snippet, Global, \
-    PreExpand, PostJump
+    PreExpand, PostJump, Comment, parse_snippet_body
+from .highlight import hi
+
+logger = logging.getLogger('completor')
 
 
 class Doc(object):
     def __init__(self, fname):
+        self.parse_body = False
         self.fname = fname
         self.stmts = []
+
+    def parse_comment(self, lines, i):
+        line = lines[i]
+
+        pos = _nonempty(line)
+        c = Comment(line[pos+1:])
+        c.line = i
+        c.column = pos
+        self.stmts.append(c)
+
+        return i + 1
 
     def parse_priority(self, lines, i):
         line = lines[i]
         parts = line.split()
 
         try:
-            self.stmts.append(Priority(int(parts[1])))
+            p = Priority(int(parts[1]))
+            self.stmts.append(p)
         except Exception as e:
             raise ParseError(self.fname, i, line)
 
@@ -85,6 +102,8 @@ class Doc(object):
         parts = line.split()
 
         g = Global("unknown", "")
+        g.line = i
+        g.column = _nonempty(line)
 
         if len(parts) == 2:
             g.tp = parts[1]
@@ -93,6 +112,8 @@ class Doc(object):
 
         for j, line in enumerate(lines[i+1:]):
             if line.rstrip().startswith("endglobal"):
+                g.hi_groups.append(hi.keyword(j+i+1, _nonempty(line), 9))
+
                 g.body = "\n".join(items)
                 self.stmts.append(g)
                 return i + j + 2
@@ -109,12 +130,44 @@ class Doc(object):
         s = Snippet(trigger, desc, opts, "")
         s.fname = self.fname
         s.line = i
+        s.column = _nonempty(line)
+
+        trigger_pos = line.find(trigger)
+        s.hi_groups.append(hi.trigger(i, trigger_pos, len(trigger)))
+
+        desc_pos = trigger_pos
+        if desc:
+            desc_pos = line.find(desc, trigger_pos + len(trigger))
+            s.hi_groups.append(hi.description(i, desc_pos, len(desc)))
+
+        if opts:
+            pos = line.find(opts, desc_pos + len(desc))
+            s.hi_groups.append(hi.option(i, pos, len(opts)))
+
 
         items = []
 
         for j, line in enumerate(lines[i+1:]):
             if line.rstrip().startswith("endsnippet"):
+                s.hi_groups.append(hi.keyword(j+i+1, _nonempty(line), 10))
                 s.body = "\n".join(items)
+
+                if self.parse_body:
+                    phs = {}
+                    parse_snippet_body(s.body, phs)
+
+                    for ph in phs.values():
+                        b = s.body[:ph.start_offset]
+                        n = b.count('\n')
+                        p = b.rfind('\n')
+                        if p > 0:
+                            c = ph.start_offset - p -1
+                        else:
+                            c = ph.start_offset
+
+                        s.hi_groups.append(hi.placeholder(
+                            i+1+n, c, ph.end_offset-ph.start_offset))
+
                 self.stmts.append(s)
                 return i + j + 2
 
@@ -140,20 +193,44 @@ class Doc(object):
         return i + 1
 
 
-def parse(data, filename="<unknown>"):
-    lines = data.splitlines()
+def gen_highlight_groups(data):
+    try:
+        stmts = parse(data, is_lines=True, parse_body=True)
+    except ParseError:
+        stmts = []
+
+    groups = []
+
+    for s in stmts:
+        groups.extend(s.gen_hi_groups())
+
+    logger.info("%r", groups)
+
+    return groups
+
+
+def parse(data, filename="<unknown>", is_lines=False, parse_body=False):
+    if is_lines:
+        lines = data
+    else:
+        lines = data.splitlines()
 
     i = 0
 
     doc = Doc(filename)
+    doc.parse_body = parse_body
 
     while i < len(lines):
         line = lines[i]
 
         stripped = line.strip()
 
-        if not stripped or stripped[0] == '#':
+        if not stripped:
             i += 1
+            continue
+
+        if stripped[0] == '#':
+            i = doc.parse_comment(lines, i)
             continue
 
         if stripped.startswith('priority'):
@@ -185,3 +262,10 @@ def parse(data, filename="<unknown>"):
         i += 1
 
     return doc.stmts
+
+
+def _nonempty(text):
+    i = 0
+    while text and text[i] in " \t":
+        pass
+    return i

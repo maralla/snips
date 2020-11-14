@@ -294,3 +294,8 @@ endfunc
 func! s:set_snippets_dirs() abort
   exe s:py 'snips.set_snippets_dirs(vim.eval("g:snips_snippets_dirs"))'
 endfunc
+
+func! snips#_gen_hi_groups() abort
+  exe s:py 'res = snips.gen_highlight_groups(vim.current.buffer[:])'
+  return s:pyeval('res')
+endfunc
