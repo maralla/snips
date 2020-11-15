@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
 
 import re
-import logging
 import string
 import collections
 from .interpolation import SnippetUtil, tab_indent
 from .highlight import hi
 
-logger = logging.getLogger('completor')
 escape_chars = {
     'n': '\\n',
     't': '\\t',
@@ -44,6 +42,9 @@ class Extends(Base):
 class Priority(Base):
     def __init__(self, priority):
         self.priority = priority
+
+    def gen_hi_groups(self):
+        return [hi.keyword(self.line, self.column, 8)]
 
     def __repr__(self):
         return "<Priority {}>".format(self.priority)
@@ -249,7 +250,10 @@ class _SnippetPart(object):
 
         return res
 
-    def render(self, g, context, ph, is_nested=False):
+    def render(self, g, context, ph, is_nested=False, cache=None):
+        if cache is None:
+            cache = {}
+
         text = ''
 
         if not is_nested:
@@ -259,21 +263,32 @@ class _SnippetPart(object):
         if self.type == self.TEXT:
             text = self.literal
         elif self.type == self.PLACEHOLDER:
-            if is_nested:
+            t = cache.get(self.number)
+            if t is not None:
+                v = t
+            elif is_nested:
                 p = ph.get(self.number)
                 if p is None:
+                    raise BaseParseError(
+                        "placeholder {} not found".format(self.numbder))
+
+                v = cache.get(p.number)
+                if v is None:
                     v = ''
-                    for d in self.default:
-                        v += d.render(g, context, is_nested=True, ph=ph)
-                else:
-                    v = self._try_apply_transformation(p.ph_text)
+                    for d in p.default:
+                        v += d.render(g, context, is_nested=True,
+                                      ph=ph, cache=cache)
+                    v = self._try_apply_transformation(v)
             else:
                 v = self.ph_text
                 p = ph.get(self.number)
                 if p:
                     v = self._try_apply_transformation(p.ph_text)
-                    self._adjust_location(p, p.start.line, p.start.column)
+                    # Only non-ref placeholder should adjust location.
+                    if p is self:
+                        self._adjust_location(p, p.start.line, p.start.column)
 
+            cache[self.number] = v
             text = v
         elif self.type == self.INTERPOLATION:
             phs = {p.number: p.ph_text for p in ph.values()}
@@ -342,7 +357,14 @@ class Snippet(Base):
                               self.body)
 
     def _render_placeholders(self, g, context):
+        cache = {}
+
         for p in self.placeholders.values():
+            text = cache.get(p.number)
+            if text is not None:
+                p.ph_text = text
+                continue
+
             p.ph_text = ''
 
             line = column = 0
@@ -352,7 +374,7 @@ class Snippet(Base):
                 d.start.column = column
 
                 tmp = text = d.render(g, context, is_nested=True,
-                                      ph=self.placeholders)
+                                      ph=self.placeholders, cache=cache)
 
                 while True:
                     i = tmp.find('\n')
@@ -368,6 +390,7 @@ class Snippet(Base):
                 d.end.column = column
 
                 p.ph_text += text
+            cache[p.number] = p.ph_text
 
     def render(self, g, context):
         self.current_g = g
@@ -493,6 +516,10 @@ class Snippet(Base):
             self.current_jump = 0
 
         p = self.ph_list[self.current_jump]
+
+        if p.number == VISUAL_NUM:
+            self.current_jump = 0
+            p = self.ph_list[0]
 
         if p.end.line != p.start.line:
             return -1, -1, -1, -1
@@ -700,7 +727,10 @@ def _escape(c):
     return escape_chars.get(c, c)
 
 
-def parse_snippet_body(body, phs, start=0, in_placeholder=False, nest=0):
+def parse_snippet_body(body, phs=None, start=0, in_placeholder=False, nest=0):
+    if phs is None:
+        phs = {}
+
     i = start
 
     parts = []
@@ -724,7 +754,7 @@ def parse_snippet_body(body, phs, start=0, in_placeholder=False, nest=0):
 
             if p.transformation is None:
                 exist = phs.get(p.number)
-                if not exist or exist.nest_level > nest:
+                if not exist or p.default or exist.nest_level > nest:
                     phs[p.number] = p
 
             parts.append(p)

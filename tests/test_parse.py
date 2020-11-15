@@ -4,7 +4,7 @@ import glob
 from subprocess import call
 
 from snips.parser import parse
-from snips.ast import Snippet
+from snips.ast import Snippet, parse_snippet_body
 
 snippets = 'https://github.com/honza/vim-snippets.git'
 
@@ -36,29 +36,27 @@ def test_parse(snippets_dir):
 
 
 def test_parse_snippet():
-    s = Snippet('', '', '', '')
+    body = 'Indent is'
+    assert parse_snippet_body(body)[0][0].literal == 'Indent is'
 
-    s.body = 'Indent is'
-    assert s._parse_body()[0][0].literal == 'Indent is'
+    body = 'Indent is: `!v indent(".")`.'
+    assert parse_snippet_body(body)[0][1].literal == '!v indent(".")'
 
-    s.body = 'Indent is: `!v indent(".")`.'
-    assert s._parse_body()[0][1].literal == '!v indent(".")'
+    body = r'`!p snip.rv = \`aaa\``'
+    assert parse_snippet_body(body)[0][1].literal == r'!p snip.rv = `aaa`'
 
-    s.body = r'`!p snip.rv = \`aaa\``'
-    assert s._parse_body()[0][1].literal == r'!p snip.rv = `aaa`'
-
-    s.body = r'''def ${1:function}(`!p
+    body = r'''def ${1:function}(`!p
 if snip.indent:
     snip.rv = 'self' + (", " if len(t[2]) else "")`${2:arg1}):
     `!p snip.rv = triple_quotes(snip)`${4:TODO: Docstring for $1.}`!p
 write_function_docstring(t, snip) `
     ${5:${VISUAL:pass}}
 '''
-    d = s._parse_body()[0]
+    d = parse_snippet_body(body)[0]
     assert d[3].type == 'interp'
     assert d[7].type == 'interp'
     assert d[11].type == 'interp'
 
-    s.body = 'def ${1:fname}(`!p snip.rv = "self, " if snip.indent else ""`$2):\n\t$0'  # noqa
-    d = s._parse_body()[0]
+    body = 'def ${1:fname}(`!p snip.rv = "self, " if snip.indent else ""`$2):\n\t$0'  # noqa
+    d = parse_snippet_body(body)[0]
     assert d[3].literal == '!p snip.rv = "self, " if snip.indent else ""'

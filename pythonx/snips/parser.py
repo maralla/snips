@@ -32,8 +32,10 @@ class Doc(object):
 
         try:
             p = Priority(int(parts[1]))
+            p.line = i
+            p.column = _nonempty(line)
             self.stmts.append(p)
-        except Exception as e:
+        except Exception:
             raise ParseError(self.fname, i, line)
 
         return i + 1
