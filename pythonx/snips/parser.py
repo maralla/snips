@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import string
 from .ast import ParseError, Extends, Priority, Snippet, Global, \
     PreExpand, PostJump, Comment, parse_snippet_body
 from .highlight import hi
@@ -144,7 +145,6 @@ class Doc(object):
             pos = line.find(opts, desc_pos + len(desc))
             s.hi_groups.append(hi.option(i, pos, len(opts)))
 
-
         items = []
 
         for j, line in enumerate(lines[i+1:]):
@@ -153,20 +153,7 @@ class Doc(object):
                 s.body = "\n".join(items)
 
                 if self.parse_body:
-                    phs = {}
-                    parse_snippet_body(s.body, phs)
-
-                    for ph in phs.values():
-                        b = s.body[:ph.start_offset]
-                        n = b.count('\n')
-                        p = b.rfind('\n')
-                        if p > 0:
-                            c = ph.start_offset - p -1
-                        else:
-                            c = ph.start_offset
-
-                        s.hi_groups.append(hi.placeholder(
-                            i+1+n, c, ph.end_offset-ph.start_offset))
+                    _gen_snippets_highlight(s, i)
 
                 self.stmts.append(s)
                 return i + j + 2
@@ -266,6 +253,87 @@ def parse(data, filename="<unknown>", is_lines=False, parse_body=False):
 
 def _nonempty(text):
     i = 0
-    while text and text[i] in " \t":
-        pass
+    while i < len(text) and text[i] in " \t":
+        i += 1
     return i
+
+
+def _nonnumber(text):
+    i = 0
+    while i < len(text) and text[i] in string.digits:
+        i += 1
+    return i
+
+
+def _gen_snippets_highlight(snip, line):
+    phs = {}
+    parts, _ = parse_snippet_body(snip.body, phs)
+
+    for part in _iter_part(parts):
+        if part.type not in (part.INTERPOLATION, part.PLACEHOLDER):
+            continue
+
+        b = snip.body[:part.start_offset]
+        n = b.count('\n')
+        p = b.rfind('\n')
+        if p > 0:
+            c = part.start_offset - p - 1
+        else:
+            c = part.start_offset
+
+        start_line = line + 1 + n
+
+        o = snip.body[part.start_offset:part.end_offset]
+        d = o.count('\n')
+
+        logger.info("%d, %r", d, o)
+
+        end_line = start_line + d
+
+        if d == 0:
+            end_column = c + part.end_offset - part.start_offset
+        else:
+            end_column = len(o) - o.rfind('\n') - 1
+
+        if part.type == part.INTERPOLATION:
+            f = hi.interpolation
+            h = f(start_line, c, end_line=end_line, end_column=end_column)
+            snip.hi_groups.append(h)
+        else:
+            hs = _gen_placeholder_highlight(o)
+            if not hs:
+                snip.hi_groups.append(hi.placeholder(
+                    start_line, c, end_line=end_line, end_column=end_column))
+            else:
+                start, end = hs
+                snip.hi_groups.append(hi.placeholder(
+                    start_line, c+start[0], end_line=end_line,
+                    end_column=c+start[1]
+                ))
+                snip.hi_groups.append(hi.placeholder(
+                    start_line, c+end[0], end_line=end_line,
+                    end_column=c+end[1]
+                ))
+
+
+def _gen_placeholder_highlight(content):
+    i = 1
+
+    logger.info("%r", content)
+
+    if content[i] in string.digits or content[i] != '{':
+        return
+
+    j = i + 1 + _nonnumber(content[2:])
+    s = len(content)
+
+    return [(0, j), (s-1, s-1)]
+
+
+def _iter_part(parts):
+    for part in parts:
+        if part.type == part.PLACEHOLDER:
+            for p in _iter_part(part.default):
+                yield p
+
+        yield part

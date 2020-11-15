@@ -778,6 +778,7 @@ def parse_snippet_body(body, phs, start=0, in_placeholder=False, nest=0):
     parts.append(current)
     return parts, i
 
+
 # $12
 # ${12:self, }
 # ${12:Default value $0 111.}

@@ -9,16 +9,24 @@ GROUPS = (
     'description',
     'option',
     'placeholder',
+    'interpolation',
 )
 
 
-def _hi(group, line, column, length):
-    return {
+def _hi(group, line, column, length=None, end_line=None, end_column=None):
+    h = {
         'line': line,
         'column': column,
-        'length': length,
-        'group': 'snips_' + group
+        'group': 'snips_' + group,
     }
+
+    if length is None:
+        h['end_line'] = end_line
+        h['end_column'] = end_column
+    else:
+        h['length'] = length
+
+    return h
 
 
 class _Hi(object):
