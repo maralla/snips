@@ -12,6 +12,7 @@ logger = logging.getLogger('completor')
 class Doc(object):
     def __init__(self, fname):
         self.parse_body = False
+        self.ignore_error = False
         self.fname = fname
         self.stmts = []
 
@@ -162,7 +163,10 @@ class Doc(object):
 
             items.append(line)
 
-        raise ParseError(self.fname, i, "no endsnippet found")
+        if not self.ignore_error:
+            raise ParseError(self.fname, i, "no endsnippet found")
+
+        return len(lines)
 
     def parse_expand_action(self, lines, i, action):
         line = lines[i]
@@ -184,7 +188,7 @@ class Doc(object):
 
 def gen_highlight_groups(data):
     try:
-        stmts = parse(data, is_lines=True, parse_body=True)
+        stmts = parse(data, is_lines=True, parse_body=True, ignore_error=True)
     except ParseError:
         stmts = []
 
@@ -198,7 +202,8 @@ def gen_highlight_groups(data):
     return groups
 
 
-def parse(data, filename="<unknown>", is_lines=False, parse_body=False):
+def parse(data, filename="<unknown>", is_lines=False, parse_body=False,
+          ignore_error=False):
     if is_lines:
         lines = data
     else:
@@ -208,6 +213,7 @@ def parse(data, filename="<unknown>", is_lines=False, parse_body=False):
 
     doc = Doc(filename)
     doc.parse_body = parse_body
+    doc.ignore_error = ignore_error
 
     while i < len(lines):
         line = lines[i]
@@ -246,7 +252,8 @@ def parse(data, filename="<unknown>", is_lines=False, parse_body=False):
             i = doc.parse_expand_action(lines, i, PostJump)
             continue
 
-        raise ParseError(filename, i, "unknown syntax")
+        if not ignore_error:
+            raise ParseError(filename, i, "unknown syntax")
 
         i += 1
 
