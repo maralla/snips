@@ -2,9 +2,16 @@ if exists("b:current_syntax")
   finish
 endif
 
+if !exists("s:_init")
+  let s:_init = 0
+endif
+
 func s:init()
-  call snips#import()
-  call snips#syntax#define_props()
+  if !s:_init
+    call snips#import()
+    call snips#syntax#define_props()
+    let s:_init = 1
+  endif
   call snips#syntax#hi()
 endfunc
 

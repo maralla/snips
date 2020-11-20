@@ -225,9 +225,10 @@ class SnipInfo(object):
     def __init__(self):
         import vim
         import os
+        import re
         bs = dict(builtins.__dict__)
         bs['print'] = _dumb_print
-        self.globals = {'__builtins__': bs, 'vim': vim, 'os': os}
+        self.globals = {'__builtins__': bs, 'vim': vim, 'os': os, 're': re}
         self.extends = set([])
         self.snippets = {}
 

@@ -187,8 +187,8 @@ class _SnippetPart(object):
         if tran is None:
             return text
 
-        if not tran.regex or not tran.replacement:
-            return ''
+        if not tran.regex:
+            return text
 
         if 'g' in tran.options:
             matches = list(re.finditer(tran.regex, text))
@@ -199,7 +199,7 @@ class _SnippetPart(object):
                 matches.append(m)
 
         if not matches:
-            return ''
+            return text
 
         res = ''
         for match in matches:
@@ -265,7 +265,7 @@ class _SnippetPart(object):
         elif self.type == self.PLACEHOLDER:
             t = cache.get(self.number)
             if t is not None:
-                v = t
+                v = self._try_apply_transformation(t)
             elif is_nested:
                 p = ph.get(self.number)
                 if p is None:
@@ -273,22 +273,27 @@ class _SnippetPart(object):
                         "placeholder {} not found".format(self.numbder))
 
                 v = cache.get(p.number)
+
                 if v is None:
                     v = ''
                     for d in p.default:
                         v += d.render(g, context, is_nested=True,
                                       ph=ph, cache=cache)
-                    v = self._try_apply_transformation(v)
+
+                v = self._try_apply_transformation(v)
+                cache[self.number] = v
             else:
                 v = self.ph_text
                 p = ph.get(self.number)
                 if p:
-                    v = self._try_apply_transformation(p.ph_text)
+                    v = p.ph_text
                     # Only non-ref placeholder should adjust location.
                     if p is self:
                         self._adjust_location(p, p.start.line, p.start.column)
 
-            cache[self.number] = v
+                v = self._try_apply_transformation(v)
+                cache[self.number] = v
+
             text = v
         elif self.type == self.INTERPOLATION:
             phs = {p.number: p.ph_text for p in ph.values()}
@@ -468,9 +473,9 @@ class Snippet(Base):
 
         if self.current_jump is None:
             if self.ph_list and self.ph_list[0].number != 0:
-                self.current_jump = 0
+                self.current_jump = self._find_jump_position(0)
             else:
-                self.current_jump = 1
+                self.current_jump = self._find_jump_position(1)
 
         return res, end_pos
 
@@ -485,8 +490,9 @@ class Snippet(Base):
             self._remove_ph(p, numbers)
 
             if numbers:
-                self.ph_list = [
-                    p for p in self.ph_list if p.number not in numbers]
+                for i, e in enumerate(self.ph_list):
+                    if e.number in numbers:
+                        self.ph_list[i] = None
 
             p.default = [d]
             p.editted = True
@@ -508,18 +514,42 @@ class Snippet(Base):
     def reset(self):
         pass
 
+    def _find_jump_position(self, start):
+        i = start
+        if self.ph_list[i] is not None:
+            return i
+
+        i += 1
+        total = len(self.ph_list)
+        while i < total and self.ph_list[i] is None:
+            i += 1
+            if i == total:
+                i = 0
+            if i == start:
+                return -1
+
+        if i == total:
+            i = -1
+
+        return i
+
     def jump_position(self):
         if not self.ph_list:
             return -1, -1, -1, -1
 
         if self.current_jump >= len(self.ph_list):
-            self.current_jump = 0
+            self.current_jump = self._find_jump_position(0)
+            if self.current_jump == -1:
+                return -1, -1, -1, -1
 
         p = self.ph_list[self.current_jump]
 
         if p.number == VISUAL_NUM:
-            self.current_jump = 0
-            p = self.ph_list[0]
+            self.current_jump = self._find_jump_position(0)
+            if self.current_jump == -1:
+                return -1, -1, -1, -1
+
+            p = self.ph_list[self.current_jump]
 
         if p.end.line != p.start.line:
             return -1, -1, -1, -1
@@ -535,16 +565,16 @@ class Snippet(Base):
         if not self.ph_list:
             return -1, -1, -1
 
-        sign = 1
         if direction == 'forward':
             self.current_jump += 1
+            if self.current_jump >= len(self.ph_list):
+                self.current_jump = 0
         else:
             self.current_jump -= 1
             if self.current_jump < 0:
-                sign = -1
+                self.current_jump = len(self.ph_list) - 1
 
-        self.current_jump = sign * (abs(self.current_jump) %
-                                    len(self.placeholders))
+        self.current_jump = self._find_jump_position(self.current_jump)
         return self.jump_position()
 
     def gen_hi_groups(self):
@@ -869,7 +899,10 @@ def _parse_transformation(data, i):
     while len(data) > i:
         c = data[i]
         if c == '\\':
-            parts[current] += c + data[i+1]
+            n = data[i+1]
+            if n == 'n':
+                n = '\n'
+            parts[current] += c + n
             i += 2
             continue
 
