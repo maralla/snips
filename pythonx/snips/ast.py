@@ -515,12 +515,16 @@ class Snippet(Base):
         pass
 
     def _find_jump_position(self, start):
+        total = len(self.ph_list)
+
         i = start
+        if i >= total:
+            return -1
+
         if self.ph_list[i] is not None:
             return i
 
         i += 1
-        total = len(self.ph_list)
         while i < total and self.ph_list[i] is None:
             i += 1
             if i == total:
