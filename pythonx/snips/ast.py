@@ -266,6 +266,11 @@ class _SnippetPart(object):
         if self.type == self.TEXT:
             text = self.literal
         elif self.type == self.PLACEHOLDER:
+            if self.number == VISUAL_NUM:
+                visual = context.get('visual', '').strip()
+                if visual:
+                    cache[VISUAL_NUM] = visual
+
             t = cache.get(self.number)
             if t is not None:
                 v = self._try_apply_transformation(t)

@@ -263,6 +263,14 @@ func! s:select(pos)
   call feedkeys("\<ESC>v" .. a:pos.end_line .. 'G' .. end .. '|o' .. a:pos.line .. 'G' .. start .."|o\<C-G>")
 endfunc
 
+func! s:_clear_trigger(length, is_block)
+  if a:is_block
+    exe 'normal! ' .. 'd0'
+  else
+    exe 'normal! ' .. 'd' .. a:length .. 'h'
+  endif
+endfunc
+
 func! s:expand(lnum, column, line) abort
   let tabstop = &softtabstop
 
@@ -283,11 +291,15 @@ func! s:expand(lnum, column, line) abort
         \ expandtab: &expandtab,
         \ shiftwidth: &shiftwidth,
         \ indent: indent('.'),
+        \ visual: getreg('a'),
+        \ on_trigger_ready: function('s:_clear_trigger'),
         \ }
+
+  call setreg('a', '')
 
   let s:context = context
 
-  exe s:py 'res = snips.expand(vim.eval("context"))'
+  exe s:py 'res = snips.expand(vim.bindeval("context"))'
   return s:pyeval('res')
 endfunc
 

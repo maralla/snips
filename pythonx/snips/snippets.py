@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import vim
 import glob
 import os
 import logging
@@ -70,20 +71,25 @@ def get(ft, token):
 
 
 class Context(dict):
-    INT_VARS = (
-        'tabstop',
-        'shiftwidth',
-        'indent',
-        'expandtab',
-        'lnum',
-        'column',
-    )
-
     def __init__(self, data):
         dict.__init__(self, data)
 
-        for k in self.INT_VARS:
-            self[k] = int(self[k])
+        for k in list(self.keys()):
+            v = self[k]
+            if isinstance(v, bytes):
+                v = v.decode()
+            self[k.decode()] = v
+
+    def on_trigger_ready(self, length, is_block):
+        """The hook is called when snippet trigger is ready.
+
+        :length: The trigger length.
+        :is_block: Whether the trigger has block option.
+        :returns: None
+        """
+        f = self.get('on_trigger_ready')
+        if f:
+            f(length, is_block)
 
 
 def _ident(text, index):
@@ -130,8 +136,9 @@ def expand(context):
     ftype = context['ftype']
     _try_init_snippets(ftype)
 
-    trigger = text.strip()
-    ident_trigger, index = _ident(text, context['column'])
+    trigger = text.lstrip()
+    column = context['column']
+    ident_trigger, index = _ident(text, column)
 
     s = None
 
@@ -146,6 +153,8 @@ def expand(context):
 
         if s is None:
             return {}
+
+        context.on_trigger_ready(len(s.trigger), s.is_block())
 
         snippet = s.clone()
         g.current_snippet = snippet
