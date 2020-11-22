@@ -309,23 +309,24 @@ def _gen_snippets_highlight(snip, line):
             h = f(start_line, c, end_line=end_line, end_column=end_column)
             snip.hi_groups.append(h)
         else:
-            hs = _gen_placeholder_highlight(o)
+            hs = _gen_placeholder_highlight(o, c)
             if not hs:
                 snip.hi_groups.append(hi.placeholder(
                     start_line, c, end_line=end_line, end_column=end_column))
             else:
                 start, end = hs
                 snip.hi_groups.append(hi.placeholder(
-                    start_line, c+start[0], end_line=end_line,
-                    end_column=c+start[1]
+                    start_line+start[0], start[1],
+                    end_line=start_line+start[0],
+                    end_column=start[2]
                 ))
                 snip.hi_groups.append(hi.placeholder(
-                    start_line, c+end[0], end_line=end_line,
-                    end_column=c+end[1]
+                    start_line+end[0], end[1], end_line=end_line,
+                    end_column=end[2]
                 ))
 
 
-def _gen_placeholder_highlight(content):
+def _gen_placeholder_highlight(content, start_column):
     i = 1
 
     logger.info("%r", content)
@@ -334,9 +335,17 @@ def _gen_placeholder_highlight(content):
         return
 
     j = i + 1 + _nonnumber(content[2:])
-    s = len(content)
 
-    return [(0, j), (s-1, s-1)]
+    n = content.count('\n')
+    size = len(content)
+
+    e = content.rfind('\n')
+    if e >= 0:
+        s = size - e - 2
+    else:
+        s = start_column + size - 1
+
+    return [(0, start_column, j+start_column), (n, s, s)]
 
 
 def _iter_part(parts):

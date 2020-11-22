@@ -2,6 +2,7 @@
 
 import re
 import string
+import logging
 import collections
 from .interpolation import SnippetUtil, tab_indent
 from .highlight import hi
@@ -10,6 +11,8 @@ escape_chars = {
     'n': '\\n',
     't': '\\t',
 }
+
+logger = logging.getLogger("completor")
 
 VISUAL_NUM = 9999
 
@@ -491,6 +494,9 @@ class Snippet(Base):
 
             if numbers:
                 for i, e in enumerate(self.ph_list):
+                    if e is None:
+                        continue
+
                     if e.number in numbers:
                         self.ph_list[i] = None
 
@@ -539,31 +545,38 @@ class Snippet(Base):
 
     def jump_position(self):
         if not self.ph_list:
-            return -1, -1, -1, -1
+            return
 
         if self.current_jump >= len(self.ph_list):
             self.current_jump = self._find_jump_position(0)
             if self.current_jump == -1:
-                return -1, -1, -1, -1
+                return
 
         p = self.ph_list[self.current_jump]
 
         if p.number == VISUAL_NUM:
             self.current_jump = self._find_jump_position(0)
             if self.current_jump == -1:
-                return -1, -1, -1, -1
+                return
 
             p = self.ph_list[self.current_jump]
 
-        if p.end.line != p.start.line:
-            return -1, -1, -1, -1
+        # if p.end.line != p.start.line:
+        #     return
 
         column = p.start.column
         length = p.end.column - p.start.column
         if p.editted:
             column += len(p.ph_text)
             length = 0
-        return p.start.line, p.start.column, column, length
+
+        return {
+            "start_line": p.start.line,
+            "start_column": p.start.column,
+            "edit_column": column,
+            "end_line": p.end.line,
+            "end_column": p.end.column,
+        }
 
     def jump(self, direction):
         if not self.ph_list:
@@ -579,6 +592,7 @@ class Snippet(Base):
                 self.current_jump = len(self.ph_list) - 1
 
         self.current_jump = self._find_jump_position(self.current_jump)
+
         return self.jump_position()
 
     def gen_hi_groups(self):

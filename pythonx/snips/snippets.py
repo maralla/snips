@@ -147,21 +147,15 @@ def expand(context):
         if s is None:
             return {}
 
-        logger.info("context: %r", context)
-
         snippet = s.clone()
         g.current_snippet = snippet
         g.current_snips_info = snips
         content, end = snippet.render(snips.globals, context)
-        lnum, orig_col, col, length = snippet.jump_position()
-        logger.info("jump: %s, %s, %s", lnum, col, length)
+        pos = snippet.jump_position()
         return {
             'content': content,
-            'lnum': lnum,
-            'col': col,
-            'orig_col': orig_col,
             'end_col': end,
-            'length': length,
+            'pos': pos or {},
         }
     except Exception as e:
         logger.exception(e)
@@ -174,30 +168,21 @@ def rerender(content):
         return {}
 
     content, end = snippet.rerender(content)
-    lnum, orig_col, col, length = snippet.jump_position()
-    logger.info("jump: %s, %s, %s", lnum, col, length)
+    pos = snippet.jump_position()
     return {
         'content': content,
-        'lnum': lnum,
-        'col': col,
-        'orig_col': orig_col,
+        'pos': pos or {},
         'end_col': end,
-        'length': length,
     }
 
 
 def jump(ft, direction):
-    logger.info("jump %s", ft)
     snippet = g.current_snippet
     if snippet is None:
         return {}
-    lnum, orig_col, col, length = snippet.jump(direction)
-    logger.info("jump: %s, %s, %s", lnum, col, length)
+    pos = snippet.jump(direction)
     return {
-        'lnum': lnum,
-        'col': col,
-        'orig_col': orig_col,
-        'length': length,
+        'pos': pos or {},
     }
 
 
@@ -248,12 +233,9 @@ class SnipInfo(object):
             priority = item.priority
             break
 
-        logger.info("add %s", items)
-
         priority = 0
 
         for item in items:
-            logger.info(item)
             if isinstance(item, Priority):
                 priority = item.priority
                 continue
@@ -276,19 +258,16 @@ class SnipInfo(object):
             self.snippets[item.trigger] = priority, item
 
     def load(self, ft, dirs):
-        logger.info("load %s %s", ft, dirs)
         for d in dirs:
             self._load_in_dir(ft, d)
 
     def _load_in_dir(self, ft, d):
-        logger.info("load in %s, %s", d, ft)
         if not ft:
             ft = 'all'
 
         files = glob.glob(os.path.join(d, '{}.snippets'.format(ft)))
         files.extend(glob.glob(os.path.join(d, '{}_*.snippets'.format(ft))))
         files.extend(glob.glob(os.path.join(d, ft, '*')))
-        logger.info("files: %s", files)
 
         try:
             for f in files:

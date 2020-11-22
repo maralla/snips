@@ -57,7 +57,7 @@ func! s:render(res, lnum) abort
   let s:expand_end_line = a:lnum+len(remain_lines)
   let s:current_line = a:lnum
 
-  if a:res.lnum == -1
+  if empty(a:res.pos)
     let s:pos = {}
 
     if len(lines) == 0
@@ -72,12 +72,19 @@ func! s:render(res, lnum) abort
       let s:pos.col = col([s:pos.line, '$'])
     endif
 
-    let s:pos.orig_col = a:res.orig_col + 1
+    let s:pos.orig_col = col('.')
     call cursor(s:pos.line, s:pos.col)
     call timer_start(0, {t -> s:end_expand()})
   else
-    let s:pos = #{line: a:lnum+a:res.lnum, col: a:res.col+1, orig_col: a:res.orig_col+1}
-    call s:select(s:pos.line, s:pos.col, a:res.length)
+    let p = a:res.pos
+    let s:pos = #{
+          \ line: a:lnum+p.start_line,
+          \ col: p.edit_column+1,
+          \ end_line: a:lnum+p.end_line,
+          \ end_column: p.end_column+1,
+          \ orig_col: p.start_column+1
+          \ }
+    call s:select(s:pos)
   endif
 
   call timer_start(0, {t -> s:enable_text_change()})
@@ -113,13 +120,23 @@ func! snips#jump_next() abort
   if empty(res)
     return ''
   endif
-  if res.lnum == -1
+
+  let pos = res.pos
+
+  if empty(pos)
     return ''
   endif
+
   let lnum = s:current_line
-  let s:pos = #{line: lnum+res.lnum, col: res.col+1, orig_col: res.orig_col+1}
+  let s:pos = #{
+        \ line: lnum+pos.start_line,
+        \ col: pos.edit_column+1,
+        \ orig_col: pos.start_column+1,
+        \ end_line: lnum+pos.end_line,
+        \ end_column: pos.end_column+1,
+        \ }
   call cursor(s:pos.line, s:pos.col)
-  call s:select(s:pos.line, s:pos.col, res.length)
+  call s:select(s:pos)
   return ''
 endfunc
 
@@ -219,7 +236,7 @@ func! s:on_text_change() abort
     let lines[0] = lines[0][col-1:]
     let lines[-1] = lines[-1][:c]
   endif
-  
+
   let content = join(lines, "\n")
   let res = s:rerender(content)
   if empty(res)
@@ -229,24 +246,21 @@ func! s:on_text_change() abort
   call timer_start(0, {t -> s:render(res, s:current_line)})
 endfunc
 
-func! s:select(lnum, start, length)
-  if a:length == 0
-    let end = a:start
-  else
-    let end = a:start + a:length - 1
-  endif
-  if a:length == 0
-    let start = virtcol([a:lnum, a:start - 1])
+func! s:select(pos)
+  if a:pos.line == a:pos.end_line && a:pos.end_column == a:pos.col
+    let start = virtcol([a:pos.line, a:pos.col - 1])
     let action = 'i'
     if start != 0
       let action = 'a'
     endif
-    call feedkeys("\<ESC>".a:lnum.'G'.start.'|'.action)
+    call feedkeys("\<ESC>" .. a:pos.line ..'G' .. start .. '|' .. action)
     return
   endif
-  let start = virtcol([a:lnum, a:start])
-  let end = virtcol([a:lnum, end])
-  call feedkeys("\<ESC>v".a:lnum.'G'.end.'|o'.a:lnum.'G'.start."|o\<C-G>")
+
+  let start = virtcol([a:pos.line, a:pos.col])
+  let end = virtcol([a:pos.end_line, a:pos.end_column-1])
+
+  call feedkeys("\<ESC>v" .. a:pos.end_line .. 'G' .. end .. '|o' .. a:pos.line .. 'G' .. start .."|o\<C-G>")
 endfunc
 
 func! s:expand(lnum, column, line) abort

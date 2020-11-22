@@ -13,6 +13,12 @@ endfunction
 
 function! s:enable()
   call snips#import()
+
+  " unmap unexpected select mode mappings.
+  sunmap m
+  sunmap <S-M>
+  sunmap v
+
   call s:disable()
 endfunction
 
