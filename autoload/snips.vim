@@ -165,7 +165,7 @@ func! s:enable_text_change()
 
   if !s:completor_callback_set
     try
-      autocmd completor User * :call s:on_completor_done()
+      autocmd completor_event User * :call s:on_completor_done()
       let s:completor_callback_set = v:true
     catch /E216/
     endtry
