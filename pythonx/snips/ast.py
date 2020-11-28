@@ -481,9 +481,10 @@ class Snippet(Base):
 
         if self.current_jump is None:
             if self.ph_list and self.ph_list[0].number != 0:
-                self.current_jump = self._find_jump_position(0)
+                pos = 0
             else:
-                self.current_jump = self._find_jump_position(1)
+                pos = 1
+            self.current_jump = self._find_jump_position(pos)
 
         return res, end_pos
 

@@ -4,6 +4,7 @@ let s:timer = -1
 let s:current_line = -1
 let s:expand_end_line = -1
 let s:pos = {}
+let s:completor_callback_set = v:false
 
 
 func! s:err(message)
@@ -75,6 +76,7 @@ func! s:render(res, lnum) abort
     let s:pos.orig_col = col('.')
     call cursor(s:pos.line, s:pos.col)
     call timer_start(0, {t -> s:end_expand()})
+    return ''
   else
     let p = a:res.pos
     let s:pos = #{
@@ -153,15 +155,27 @@ imap <leader>z <C-R>=snips#expand()<CR>
 
 
 func! s:enable_text_change()
+  let s:text_change_disabled = v:false
+
   augroup snips_text_change
     autocmd!
     autocmd TextChanged * :call s:on_text_change()
     autocmd TextChangedI * :call s:on_text_change()
   augroup END
+
+  if !s:completor_callback_set
+    try
+      autocmd completor User * :call s:on_completor_done()
+      let s:completor_callback_set = v:true
+    catch /E216/
+    endtry
+  endif
 endfunc
 
 
 func! s:disable_text_change()
+  let s:text_change_disabled = v:true
+
   augroup snips_text_change
     autocmd!
   augroup END
@@ -244,6 +258,14 @@ func! s:on_text_change() abort
   endif
 
   call timer_start(0, {t -> s:render(res, s:current_line)})
+endfunc
+
+func! s:on_completor_done() abort
+  if s:text_change_disabled
+    return ''
+  endif
+
+  call s:on_text_change()
 endfunc
 
 func! s:select(pos)
