@@ -360,6 +360,9 @@ class Snippet(Base):
 
         self.hi_groups = []
 
+    def is_inline(self):
+        return 'b' not in self.options
+
     def is_block(self):
         return not self.options or 'b' in self.options
 

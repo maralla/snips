@@ -115,7 +115,7 @@ def _get_snip(snips, trigger, ident_trigger, index, text, context):
             return
 
         _, s = snips.get(ident_trigger)
-        if not s or s.is_block():
+        if not s or not s.is_inline():
             return
 
         context['_prefix'] = text[:index+1]

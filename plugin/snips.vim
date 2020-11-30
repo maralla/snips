@@ -18,6 +18,7 @@ function! s:enable()
   sunmap m
   sunmap <S-M>
   sunmap v
+  sunmap _
 
   call s:disable()
 endfunction
